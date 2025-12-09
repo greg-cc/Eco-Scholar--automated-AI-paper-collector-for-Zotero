@@ -16,7 +16,7 @@ import CycleHeader from './components/CycleHeader';
 import QueuePanel from './components/QueuePanel';
 import QueryManager from './components/QueryManager';
 import NetworkSidebar from './components/NetworkSidebar';
-import { Settings2, CloudUpload, BookOpen } from 'lucide-react';
+import { Settings2, CloudUpload, BookOpen, XCircle } from 'lucide-react';
 import { clsx } from 'clsx';
 
 const App: React.FC = () => {
@@ -29,7 +29,7 @@ const App: React.FC = () => {
     ollamaModel: 'openthinker', 
     ollamaEmbeddingModel: 'nomic-embed-text', 
     minVectorScore: 0.59, 
-    minCompositeScore: 4.2, 
+    minCompositeScore: 0.60, // UPDATED: Default to 0.6 Average
     minProbabilityScore: 5, // Normalized from 50 (0-10 scale)
     gradingTopics: DEFAULT_GRADING_TOPICS,
     turboThresholdCount: 10,
@@ -81,7 +81,7 @@ const App: React.FC = () => {
       query: q,
       status: 'READY',
       vecMin: 0.59,
-      compMin: 4.2,
+      compMin: 0.60, // UPDATED
       probMin: 5, // Normalized from 50
       startRec: 0,
       stopRec: 1000,
@@ -249,14 +249,18 @@ const App: React.FC = () => {
     const signal = controller.signal;
     
     try {
+      // SEQUENTIAL EXECUTION FOR SENTENCE VECTORS
+      // Local LLMs often choke on parallel embedding requests, returning empty/null responses.
       const activeSentences = config.semanticSentences.filter(s => s.enabled);
-      const sentenceVectors = await Promise.all(
-        activeSentences.map(async (s) => ({
-          ...s,
-          vector: await aiServiceRef.current!.getEmbedding(s.text, signal)
-        }))
-      );
-      const validSentenceVectors = sentenceVectors.filter(s => s.vector !== null) as (typeof activeSentences[0] & { vector: number[] })[];
+      const validSentenceVectors: (typeof activeSentences[0] & { vector: number[] })[] = [];
+      
+      for (const s of activeSentences) {
+        if (signal.aborted) throw new Error("Cancelled by user");
+        const vec = await aiServiceRef.current!.getEmbedding(s.text, signal);
+        if (vec) {
+            validSentenceVectors.push({ ...s, vector: vec });
+        }
+      }
       
       if (validSentenceVectors.length === 0 && activeSentences.length > 0) {
         throw new Error("Failed to generate embeddings. Check AI Provider connection.");
@@ -312,6 +316,11 @@ const App: React.FC = () => {
           let failFastTriggered = false;
 
           const queryVector = await aiServiceRef.current!.getEmbedding(queryTerm, signal);
+          
+          // CRITICAL: Fail batch if query vector is missing. Prevents silent failure where everything gets 0 score.
+          if (!queryVector) {
+              throw new Error(`Failed to generate embedding for query: "${queryTerm}". Check Ollama status.`);
+          }
           
           const rawPapers = await searchPapers(queryTerm, 'PubMed', signal);
           const uniquePapers = Array.from(new Map(rawPapers.map(p => [p.id, p])).values());
@@ -373,18 +382,19 @@ const App: React.FC = () => {
                 }
             }
 
-            // 2. Composite Score
+            // 2. Composite Score (Updated to Average Top 6)
             let compositeScore = 0;
             const matches: any[] = [];
+            const ruleScores: number[] = [];
             
             if (paperVector && validSentenceVectors.length > 0) {
                 for (const sv of validSentenceVectors) {
                     const similarity = cosineSimilarity(sv.vector, paperVector);
                     // Weight: Positive rules add score, Negative rules subtract score
                     const weightedScore = sv.positive ? similarity : -similarity;
-                    compositeScore += weightedScore;
+                    ruleScores.push(weightedScore);
 
-                    if (similarity > 0.6) { // Only log significant matches
+                    if (similarity > 0.35) { // Log significant raw matches
                         matches.push({
                             sentenceId: sv.id,
                             sentence: sv.text,
@@ -394,6 +404,16 @@ const App: React.FC = () => {
                         });
                     }
                 }
+
+                // SORT and AVERAGE TOP 6
+                // This converts the cumulative sum into a normalized score (approx -1 to 1)
+                ruleScores.sort((a, b) => b - a); // Descending
+                const top6 = ruleScores.slice(0, 6);
+                const sumTop6 = top6.reduce((acc, val) => acc + val, 0);
+                
+                // Divisor is 6 (User request: "Divide by 6")
+                // If fewer than 6 rules exist, this logic penalizes the score, which is safe.
+                compositeScore = sumTop6 / 6;
             }
             
             // Normalize composite score to be positive for filtering (shift by assumption that min is 0 in UI)
@@ -403,7 +423,13 @@ const App: React.FC = () => {
             const passedVector = vectorScore >= itemVecMin;
             const passedComposite = compositeScore >= itemCompMin;
             
-            if (passedVector && passedComposite) {
+            // LOGIC CHANGE: Use OR logic (Union) instead of AND (Intersection)
+            // If the paper passes the Vector query threshold OR the Semantic Composite threshold, it proceeds.
+            // This prevents "High Quality" papers (high vector match) from being filtered just because they 
+            // failed the semantic rules (negative composite score).
+            const passedPreFilter = passedVector || passedComposite;
+            
+            if (passedPreFilter) {
                 setStats(prev => ({ ...prev, passedVector: prev.passedVector + 1 }));
             }
 
@@ -412,7 +438,7 @@ const App: React.FC = () => {
             let status: ProcessingResult['status'] = 'FILTERED_OUT';
             let skippedAi = true;
 
-            if (passedVector && passedComposite) {
+            if (passedPreFilter) {
                  cycleRef.current.processedForTurbo++;
                  
                  // Turbo Check
@@ -426,6 +452,8 @@ const App: React.FC = () => {
                      skippedAi = true;
                      setStats(prev => ({ ...prev, qualified: prev.qualified + 1, turboModeActive: true, energySaved: prev.energySaved + 1 }));
                      queryQualifiedCount++;
+                     // Fix: Keep yield high to maintain Turbo Mode activation (Assumption: Skipped papers are qualified)
+                     cycleRef.current.qualifiedForTurbo++;
                  } else {
                      skippedAi = false;
                      setStats(prev => ({ ...prev, aiAnalyzed: prev.aiAnalyzed + 1 }));

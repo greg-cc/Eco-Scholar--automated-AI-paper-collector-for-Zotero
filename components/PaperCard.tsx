@@ -162,7 +162,9 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                                 {renderSummary(ai.summary)}
                             </div>
                         ) : (
-                            <span className="text-xs text-slate-400 italic">Pending Analysis...</span>
+                            <span className="text-xs text-slate-400 italic">
+                                {isFiltered ? "Filtered by Pre-screen Rules" : "Pending Analysis..."}
+                            </span>
                         )}
                     </div>
                 </div>

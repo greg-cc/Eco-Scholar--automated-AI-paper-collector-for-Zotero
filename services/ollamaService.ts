@@ -41,13 +41,24 @@ export class OllamaService implements AIService {
 
   /**
    * Generic fetch wrapper with robust error handling for CORS and Connectivity.
-   * Supports STREAMING response updates.
+   * Supports STREAMING response updates and RETRY LOGIC (3 mins, 10s interval).
+   * Now supports VALIDATION callback to retry on valid HTTP 200 but invalid JSON data.
    */
-  private async fetchWithCORSCheck(url: string, options: { method: string, body?: any }, errorMessageContext: string, signal?: AbortSignal) {
+  private async fetchWithCORSCheck(
+      url: string, 
+      options: { method: string, body?: any }, 
+      errorMessageContext: string, 
+      signal?: AbortSignal,
+      validate?: (json: any) => boolean
+  ) {
     const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     const startTime = Date.now();
     
-    // Log Request
+    // Retry Configuration
+    const MAX_DURATION = 3 * 60 * 1000; // 3 minutes
+    const RETRY_INTERVAL = 10000; // 10 seconds
+
+    // Log Request (Initial)
     const path = url.replace(this.baseUrl, '');
     const reqBodyStr = options.body ? JSON.stringify(options.body, null, 2) : undefined;
     
@@ -62,6 +73,7 @@ export class OllamaService implements AIService {
         requestBody: reqBodyStr
     });
 
+    // The core fetch logic
     const doFetch = async (targetUrl: string) => {
         // Surgical Fix: Do not send Content-Type for GET requests.
         const headers: Record<string, string> = {};
@@ -96,6 +108,12 @@ export class OllamaService implements AIService {
         // Handle JSON Response (Non-Streaming, e.g. Embeddings/Tags)
         if (!options.body?.stream) {
             const json = await response.json();
+            
+            // VALIDATION: Ensure response contains expected data (e.g. "embedding")
+            if (validate && !validate(json)) {
+                throw new Error("Response validation failed: Missing expected data fields.");
+            }
+
              this.onLog?.({
                 id: requestId + '-res',
                 timestamp: Date.now(),
@@ -168,90 +186,96 @@ export class OllamaService implements AIService {
         return { response: fullResponseText };
     };
 
-    try {
-      return await doFetch(url);
-    } catch (error: any) {
-      // Log Failure
-      this.onLog?.({
-          id: requestId + '-err',
-          timestamp: Date.now(),
-          source: 'Ollama',
-          type: 'err',
-          method: options.method,
-          url: path,
-          duration: Date.now() - startTime,
-          details: error.message
-      });
+    // --- RETRY LOOP ---
+    let attempt = 0;
+    while (true) {
+        attempt++;
+        try {
+            return await doFetch(url);
+        } catch (error: any) {
+             // 1. Abort Check (Stop immediately)
+             if (error.name === 'AbortError') {
+                 this.onLog?.({
+                    id: requestId + '-abort',
+                    timestamp: Date.now(),
+                    source: 'Ollama',
+                    type: 'err',
+                    method: options.method,
+                    url: path,
+                    duration: Date.now() - startTime,
+                    details: 'Request aborted by user'
+                });
+                throw error; 
+             }
 
-      if (error.name === 'AbortError') {
-          throw error; 
-      }
+             // 2. Automatic Fallback: Try 127.0.0.1 if localhost failed
+             if (url.includes('localhost')) {
+                try {
+                    const fallbackUrl = url.replace('localhost', '127.0.0.1');
+                    console.warn(`[Ollama] 'localhost' failed. Retrying with '127.0.0.1': ${fallbackUrl}`);
+                    
+                    // Log the fallback attempt inside this loop iteration
+                    return await doFetch(fallbackUrl);
+                } catch (retryError: any) {
+                    // Fallback failed, continue to standard retry logic below
+                }
+             }
+             
+             // 3. Check if Time Limit Exceeded
+             const elapsed = Date.now() - startTime;
+             if (elapsed > MAX_DURATION) {
+                 // Log Final Failure
+                this.onLog?.({
+                    id: requestId + '-err-final',
+                    timestamp: Date.now(),
+                    source: 'Ollama',
+                    type: 'err',
+                    method: options.method,
+                    url: path,
+                    duration: elapsed,
+                    details: `Max retry duration (3m) exceeded. Last error: ${error.message}`
+                });
 
-      // 1. Automatic Fallback: Try 127.0.0.1 if localhost failed
-      // Chrome treats localhost and 127.0.0.1 distinctively for CORS/Mixed Content
-      if (url.includes('localhost')) {
-          try {
-              const fallbackUrl = url.replace('localhost', '127.0.0.1');
-              console.warn(`[Ollama] 'localhost' failed. Retrying with '127.0.0.1': ${fallbackUrl}`);
-              
-              // Log Retry
-              this.onLog?.({
-                id: requestId + '-retry',
+                // Final Diagnostics to throw a helpful error
+                try {
+                    const rootUrl = new URL(url).origin;
+                    await fetch(rootUrl, { mode: 'no-cors', signal });
+                    throw new Error(`Connection blocked by CORS.\nOllama is running, but blocked.\nFix: Set OLLAMA_ORIGINS="*" env var.`);
+                } catch (diagErr: any) {
+                    if (diagErr.message.includes('CORS')) throw diagErr;
+                }
+                if (typeof window !== 'undefined' && window.location.protocol === 'https:' && url.startsWith('http:')) {
+                        throw new Error(`Security Error: Mixed Content (HTTPS -> HTTP).`);
+                }
+                if (error instanceof TypeError && error.message === 'Failed to fetch') {
+                    throw new Error(`Connection failed after 3 minutes.\nCould not connect to ${this.baseUrl}.\nEnsure 'ollama serve' is running.`);
+                }
+
+                throw new Error(`${errorMessageContext}: ${error.message}`);
+             }
+
+             // 4. Wait & Retry
+             const remaining = Math.round((MAX_DURATION - elapsed) / 1000);
+             console.warn(`[Ollama] Connection failed. Retrying in 10s... (Attempt ${attempt}, ${remaining}s left). Error: ${error.message}`);
+             
+             this.onLog?.({
+                id: requestId + `-retry-${attempt}`,
                 timestamp: Date.now(),
                 source: 'Ollama',
-                type: 'req',
+                type: 'err',
                 method: options.method,
-                url: path + ' (Retry 127.0.0.1)',
-              });
+                url: path,
+                duration: elapsed,
+                details: `Connection failed. Retrying in 10s... Error: ${error.message}`
+             });
 
-              return await doFetch(fallbackUrl);
-          } catch (retryError: any) {
-              // Fallback failed, proceed to diagnostics below
-          }
-      }
-
-      console.error(`${errorMessageContext}:`, error);
-      
-      // 2. DIAGNOSTIC: Check if server is up but blocking CORS
-      // We try a 'no-cors' request to the root. If it doesn't throw, the server is reachable.
-      try {
-          const rootUrl = new URL(url).origin;
-          await fetch(rootUrl, { mode: 'no-cors', signal });
-          
-          // If we reached here, the server IS UP, but the previous request failed (likely CORS)
-          throw new Error(
-             `Connection blocked by CORS.\n` +
-             `Ollama is running, but rejected the request origin.\n` +
-             `Fix: Set OLLAMA_ORIGINS="*" env var and restart Ollama.`
-          );
-      } catch (diagnosticError: any) {
-          // If the diagnostic error is the one we just threw, rethrow it
-          if (diagnosticError.message.includes('Connection blocked by CORS')) {
-              throw diagnosticError;
-          }
-          // If this diagnostic fetch ALSO failed (e.g. TypeError: Failed to fetch), 
-          // it usually means the server is down OR Mixed Content blocked it.
-      }
-
-      // 3. Mixed Content Check (HTTPS -> HTTP)
-      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && url.startsWith('http:')) {
-            throw new Error(
-            `Security Error: Mixed Content.\n` +
-            `You are using HTTPS but Ollama is HTTP.\n` +
-            `Browsers block this. Run this app on HTTP or use a proxy.`
-            );
-      }
-
-      // 4. General Connection Error
-      if (error instanceof TypeError && error.message === 'Failed to fetch') {
-         throw new Error(
-            `Connection failed.\n` +
-            `Could not connect to Ollama at ${this.baseUrl}.\n` +
-            `Ensure 'ollama serve' is running.`
-         );
-      }
-
-      throw error;
+             await new Promise(resolve => setTimeout(resolve, RETRY_INTERVAL));
+             
+             // Check signal again after waiting
+             if (signal?.aborted) {
+                  throw new DOMException('Aborted', 'AbortError');
+             }
+        }
     }
   }
 
@@ -264,7 +288,8 @@ export class OllamaService implements AIService {
           `${this.baseUrl}/api/tags`,
           { method: 'GET' },
           "Ollama List Models Error",
-          signal
+          signal,
+          (json) => !!json.models // Validator: ensure 'models' key exists
       );
       return data.models || [];
   }
@@ -280,9 +305,11 @@ export class OllamaService implements AIService {
             body: { model: this.embedModel, prompt: text }
         },
         "Ollama Embedding Error",
-        signal
+        signal,
+        // Validator: ensure 'embedding' key exists (some versions/models might return empty bodies on failure)
+        (json) => !!json.embedding || !!json.embeddings
       );
-      return data.embedding || null;
+      return data.embedding || data.embeddings || null;
     } catch (error) {
        // Propagate error for the UI to display
        throw error;

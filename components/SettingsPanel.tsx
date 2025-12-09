@@ -525,11 +525,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
 
         <div>
             <div className="flex justify-between mb-1">
-                <label className="text-sm font-medium text-slate-700">Min Composite Score</label>
+                <label className="text-sm font-medium text-slate-700">Min Composite Score (Avg Top 6)</label>
                 <span className="text-xs font-mono text-green-600 bg-green-50 px-2 py-0.5 rounded">{localConfig.minCompositeScore.toFixed(2)}</span>
             </div>
             <input 
-                type="range" step="0.1" min="0" max="6"
+                type="range" step="0.01" min="-1" max="1"
                 value={localConfig.minCompositeScore}
                 onChange={(e) => setLocalConfig({...localConfig, minCompositeScore: parseFloat(e.target.value)})}
                 className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-600"
