@@ -44,6 +44,14 @@ export interface ProcessingResult {
   };
   skippedAi: boolean; // True if Turbo Mode skipped the AI check
   status: 'FILTERED_OUT' | 'PENDING_AI' | 'AI_REJECTED' | 'QUALIFIED' | 'QUALIFIED_TURBO' | 'SKIPPED_FAIL_FAST';
+  
+  // New Statistics for UI visibility
+  turboStatistics?: {
+    processed: number; // Number of papers that passed pre-filters so far
+    qualified: number; // Number of those that were qualified by AI (or Turbo)
+    yield: number;     // qualified / processed
+    active: boolean;   // Was Turbo Mode ON for this paper?
+  };
 }
 
 export interface SemanticSentence {
@@ -153,9 +161,16 @@ export interface CycleHeaderData {
   };
 }
 
+export interface TurboGroupData {
+  id: string;
+  cycleId: string; // Links this group to the header
+  items: { paper: Paper; result: ProcessingResult }[];
+}
+
 export type FeedItem = 
   | { type: 'HEADER'; data: CycleHeaderData }
-  | { type: 'PAPER'; data: { paper: Paper; result: ProcessingResult } };
+  | { type: 'PAPER'; data: { paper: Paper; result: ProcessingResult } }
+  | { type: 'TURBO_GROUP'; data: TurboGroupData };
 
 // New Interface for Network Debugging
 export interface NetworkLog {

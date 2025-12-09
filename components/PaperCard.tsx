@@ -119,6 +119,18 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                     <span>{formatProb(ai.probability, result.probabilityMin)}</span>
                 </div>
             )}
+            
+            {/* NEW TURBO COLUMN */}
+            <div className={clsx("flex flex-col items-end leading-none pl-2 border-l border-slate-200", 
+                 result.turboStatistics?.active ? "text-purple-600" : "text-slate-400"
+            )}>
+                <span className="text-[8px] uppercase font-bold text-slate-400">Turbo</span>
+                <span>
+                    {result.turboStatistics 
+                        ? `${result.turboStatistics.qualified}/${result.turboStatistics.processed} (${(result.turboStatistics.yield * 100).toFixed(0)}%)`
+                        : '-'}
+                </span>
+            </div>
         </div>
 
         {/* Saved Tag */}
@@ -254,6 +266,12 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                             <div className="flex justify-between border-b border-slate-200 pb-1">
                                 <span className="font-bold text-slate-600">Discovery Probability:</span>
                                 <span className="font-mono">{ai.probability ?? 0}/10</span>
+                            </div>
+                        )}
+                        {result.turboStatistics && (
+                            <div className="flex justify-between border-b border-slate-200 pb-1 text-purple-600">
+                                <span className="font-bold">Turbo Yield:</span>
+                                <span className="font-mono">{result.turboStatistics.qualified}/{result.turboStatistics.processed} ({(result.turboStatistics.yield * 100).toFixed(0)}%)</span>
                             </div>
                         )}
                     </div>

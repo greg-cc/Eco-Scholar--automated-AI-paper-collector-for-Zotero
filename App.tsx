@@ -12,6 +12,7 @@ import { generateRIS, downloadRIS } from './services/exportService';
 import StatsPanel from './components/StatsPanel';
 import SettingsPanel from './components/SettingsPanel';
 import PaperCard from './components/PaperCard';
+import TurboGroupCard from './components/TurboGroupCard';
 import CycleHeader from './components/CycleHeader';
 import QueuePanel from './components/QueuePanel';
 import QueryManager from './components/QueryManager';
@@ -100,7 +101,7 @@ const App: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [zoteroResults, setZoteroResults] = useState<ZoteroResult[] | null>(null);
 
-  // Results Feed (Polymorphic: Headers + Papers)
+  // Results Feed (Polymorphic: Headers + Papers + TurboGroups)
   const [results, setResults] = useState<FeedItem[]>([]);
   
   // Network Logs for Sidebar
@@ -158,11 +159,12 @@ const App: React.FC = () => {
   }, [config.provider, config.geminiApiKey, config.geminiModel, config.ollamaBaseUrl, config.ollamaModel, config.ollamaEmbeddingModel, handleNetworkLog]);
 
   const handleExport = async () => {
-    const paperItems = results
-        .filter(r => r.type === 'PAPER')
-        .map(r => r as { type: 'PAPER', data: { paper: Paper; result: ProcessingResult } })
-        .map(r => r.data)
-        .filter(r => r.result.status === 'QUALIFIED' || r.result.status === 'QUALIFIED_TURBO');
+    // UPDATED: Flatten results to include papers inside TURBO_GROUP items
+    const paperItems = results.flatMap(r => {
+        if (r.type === 'PAPER') return [r.data];
+        if (r.type === 'TURBO_GROUP') return r.data.items;
+        return [];
+    }).filter(r => r.result.status === 'QUALIFIED' || r.result.status === 'QUALIFIED_TURBO');
 
     if (paperItems.length === 0) {
         alert("No qualified papers to process.");
@@ -286,8 +288,9 @@ const App: React.FC = () => {
              itemProbMin = itemProbMin / 10;
           }
 
+          const headerId = `cycle-${Date.now()}-${i}`;
           const headerData: CycleHeaderData = {
-              id: `cycle-${Date.now()}-${i}`,
+              id: headerId,
               query: queryTerm,
               timestamp: Date.now(),
               configSnapshot: {
@@ -437,6 +440,7 @@ const App: React.FC = () => {
             let aiAnalysis: any = undefined;
             let status: ProcessingResult['status'] = 'FILTERED_OUT';
             let skippedAi = true;
+            let turboActiveForThis = false;
 
             if (passedPreFilter) {
                  cycleRef.current.processedForTurbo++;
@@ -445,9 +449,9 @@ const App: React.FC = () => {
                  const turboYield = cycleRef.current.processedForTurbo > 0 
                     ? cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo 
                     : 0;
-                 const turboActive = cycleRef.current.processedForTurbo > config.turboThresholdCount && turboYield >= config.turboQualifyRate;
+                 turboActiveForThis = cycleRef.current.processedForTurbo > config.turboThresholdCount && turboYield >= config.turboQualifyRate;
 
-                 if (turboActive) {
+                 if (turboActiveForThis) {
                      status = 'QUALIFIED_TURBO';
                      skippedAi = true;
                      setStats(prev => ({ ...prev, qualified: prev.qualified + 1, turboModeActive: true, energySaved: prev.energySaved + 1 }));
@@ -473,6 +477,16 @@ const App: React.FC = () => {
                  }
             }
 
+            // Capture Statistics for UI (After updates)
+            const currentTurboStats = {
+                processed: cycleRef.current.processedForTurbo,
+                qualified: cycleRef.current.qualifiedForTurbo,
+                yield: cycleRef.current.processedForTurbo > 0 
+                    ? cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo 
+                    : 0,
+                active: turboActiveForThis
+            };
+
             const result: ProcessingResult = {
                 paperId: paper.id,
                 querySource: queryTerm,
@@ -486,10 +500,40 @@ const App: React.FC = () => {
                 probabilityMin: itemProbMin,
                 aiAnalysis,
                 skippedAi,
-                status
+                status,
+                turboStatistics: currentTurboStats
             };
 
-            setResults(prev => [...prev, { type: 'PAPER', data: { paper, result } }]);
+            // RESULT HANDLING: Group Turbo records or add normally
+            if (status === 'QUALIFIED_TURBO') {
+                setResults(prev => {
+                    const last = prev[prev.length - 1];
+                    // If the last item is already a TURBO_GROUP for this query cycle, append to it
+                    if (last && last.type === 'TURBO_GROUP' && last.data.cycleId === headerId) {
+                        const updatedGroup: FeedItem = {
+                            type: 'TURBO_GROUP',
+                            data: {
+                                ...last.data,
+                                items: [...last.data.items, { paper, result }]
+                            }
+                        };
+                        return [...prev.slice(0, -1), updatedGroup];
+                    } else {
+                        // Start a new TURBO_GROUP
+                        return [...prev, {
+                            type: 'TURBO_GROUP',
+                            data: {
+                                id: `turbo-group-${Date.now()}`,
+                                cycleId: headerId,
+                                items: [{ paper, result }]
+                            }
+                        }];
+                    }
+                });
+            } else {
+                // Standard Paper or Filtered/Rejected item
+                setResults(prev => [...prev, { type: 'PAPER', data: { paper, result } }]);
+            }
           }
 
           if (!failFastTriggered) {
@@ -611,6 +655,8 @@ const App: React.FC = () => {
                     {results.map((item, index) => {
                         if (item.type === 'HEADER') {
                             return <CycleHeader key={item.data.id} header={item.data} />;
+                        } else if (item.type === 'TURBO_GROUP') {
+                            return <TurboGroupCard key={item.data.id} data={item.data} />;
                         } else {
                             return <PaperCard key={item.data.paper.id} paper={item.data.paper} result={item.data.result} />;
                         }
