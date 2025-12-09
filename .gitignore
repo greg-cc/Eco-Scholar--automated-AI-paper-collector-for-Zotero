@@ -1,0 +1,16 @@
+
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+build/
+
+# Environment variables (API Keys)
+.env
+.env.local
+.env.*.local
+
+# System files
+.DS_Store
+Thumbs.db

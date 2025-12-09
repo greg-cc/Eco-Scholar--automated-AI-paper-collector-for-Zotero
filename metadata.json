@@ -1,0 +1,5 @@
+{
+  "name": "EcoScholar AI",
+  "description": "An energy-efficient academic paper filter that uses semantic pre-filtering and adaptive AI verification to minimize computational overhead.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,179 @@
+
+export interface Paper {
+  id: string;
+  title: string;
+  abstract: string;
+  authors: string[];
+  year: number;
+  url: string;
+  doi?: string;
+  source: 'SemanticScholar' | 'PubMed';
+}
+
+export interface MatchDetail {
+  sentenceId: string;
+  sentence: string;
+  tag: string; // The S-Tag
+  netScore: number; // Weighted Score
+  rawScore: number; // Raw Cosine Similarity
+}
+
+export interface ProcessingResult {
+  paperId: string;
+  querySource: string; // The search term that found this paper
+  vectorScore: number; // Query Similarity (0-1)
+  compositeScore: number; // Semantic Accumulation (can be > 1)
+  matches: MatchDetail[]; // Top semantic matches
+  passedVectorFilter: boolean;
+  passedCompositeFilter: boolean;
+  
+  // Thresholds used during processing
+  vectorMin?: number;
+  compositeMin?: number;
+  probabilityMin?: number;
+
+  aiAnalysis?: {
+    qualified: boolean;
+    score: number; // 0-10
+    summary: string;
+    tags: string[];
+    phytochemicals?: string;
+    plants?: string;
+    possible_plants?: string;
+    probability?: number;
+  };
+  skippedAi: boolean; // True if Turbo Mode skipped the AI check
+  status: 'FILTERED_OUT' | 'PENDING_AI' | 'AI_REJECTED' | 'QUALIFIED' | 'QUALIFIED_TURBO' | 'SKIPPED_FAIL_FAST';
+}
+
+export interface SemanticSentence {
+  id: string;
+  text: string;
+  enabled: boolean;
+  positive: boolean; // True = Must match (positive weight), False = Penalty
+  customTag: string;
+}
+
+export type AIProvider = 'gemini' | 'ollama';
+
+export interface AppConfig {
+  provider: AIProvider;
+  geminiApiKey: string;
+  geminiModel: string; // Selected Gemini Model ID
+  ollamaBaseUrl: string;
+  ollamaModel: string; // Generation Model (e.g., llama3, meditron)
+  ollamaEmbeddingModel: string; // Embedding Model (e.g., nomic-embed-text)
+  
+  // Zotero Config
+  zoteroApiKey?: string;
+  zoteroLibraryId?: string; // User ID or Group ID
+  useLocalZotero: boolean; // Toggle for Local API
+  zoteroIp: string;
+  zoteroPort: string;
+
+  // Scoring & Grading
+  minVectorScore: number; // Threshold for Query <-> Paper
+  minCompositeScore: number; // Threshold for Semantic Sentences <-> Paper
+  minProbabilityScore: number; // Threshold for AI Discovery Probability (0-10)
+  gradingTopics: string[]; // List of required topics for AI Grading
+
+  turboThresholdCount: number; // e.g., 10 papers to check
+  turboQualifyRate: number; // e.g., 0.7 (70%)
+  failFast: boolean; // If true, skips query if first N papers fail
+  semanticSentences: SemanticSentence[];
+}
+
+export interface CycleStats {
+  totalScanned: number;
+  passedVector: number; // Passed BOTH Vector and Composite pre-filters
+  aiAnalyzed: number;
+  qualified: number;
+  turboModeActive: boolean;
+  energySaved: number; // Abstract units representing saved Generation calls
+}
+
+export interface AIService {
+  getEmbedding(text: string, signal?: AbortSignal): Promise<number[] | null>;
+  // Updated: accepts fullText for grounded summarization
+  generateAbstract(title: string, authors: string[], fullText?: string, signal?: AbortSignal): Promise<string>;
+  analyzePaper(paper: Paper, gradingTopics: string[], signal?: AbortSignal): Promise<{ 
+      qualified: boolean; 
+      score: number; 
+      summary: string; 
+      tags: string[];
+      phytochemicals: string;
+      plants: string;
+      possible_plants: string;
+      probability: number;
+  }>;
+}
+
+export type QueueStatus = 'READY' | 'RUNNING' | 'COMPLETED' | 'NEEDS_ADJUSTMENT' | 'CANCELLED';
+
+export interface QueueItem {
+  id: string;
+  query: string;
+  status: QueueStatus;
+  yield?: string; // e.g. "10%"
+  details?: string;
+  
+  // Per-Query Configuration
+  collectionId?: string;
+  vecMin?: number;
+  compMin?: number; 
+  probMin?: number;
+  startRec?: number;
+  stopRec?: number;
+  selected?: boolean; // UI Selection state
+}
+
+export interface CycleHeaderData {
+  id: string;
+  query: string;
+  timestamp: number;
+  configSnapshot: {
+    vectorMin: number;
+    compMin: number;
+    probMin: number; // Discovery Probability
+    gradingTopics: string[]; // Truncated or count
+    
+    startRec: number;
+    stopRec: number;
+    source: string;
+    model: string;
+    
+    speedUp: boolean;
+    failFast: boolean;
+    turboThreshold: number;
+    qualifyRate: number;
+    
+    collection: string;
+    mode: string;
+    semanticRuleCount: number;
+  };
+}
+
+export type FeedItem = 
+  | { type: 'HEADER'; data: CycleHeaderData }
+  | { type: 'PAPER'; data: { paper: Paper; result: ProcessingResult } };
+
+// New Interface for Network Debugging
+export interface NetworkLog {
+  id: string;
+  timestamp: number;
+  source: 'Ollama' | 'Zotero' | 'Gemini';
+  type: 'req' | 'res' | 'err';
+  method: string;
+  url: string;
+  status?: number;
+  duration?: number;
+  details?: string;
+  requestBody?: string;
+  responseBody?: string;
+}
+
+export interface ZoteroResult {
+  paperTitle: string;
+  status: 'UPLOADED' | 'DUPLICATE' | 'UNCERTAIN' | 'ERROR';
+  details?: string;
+}
