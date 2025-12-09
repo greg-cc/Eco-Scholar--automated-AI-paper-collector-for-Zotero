@@ -13,54 +13,54 @@ const TurboGroupCard: React.FC<TurboGroupCardProps> = ({ data }) => {
   const count = data.items.length;
 
   // Calculate averages for display
-  const avgVec = data.items.reduce((acc, i) => acc + i.result.vectorScore, 0) / count;
-  const avgComp = data.items.reduce((acc, i) => acc + i.result.compositeScore, 0) / count;
+  const avgVec = count > 0 ? data.items.reduce((acc, i) => acc + i.result.vectorScore, 0) / count : 0;
+  const avgComp = count > 0 ? data.items.reduce((acc, i) => acc + i.result.compositeScore, 0) / count : 0;
 
   return (
-    <div className="rounded-md border border-purple-200 shadow-sm bg-purple-50/30 overflow-hidden mb-2">
+    <div className="rounded-md border-l-4 border-l-purple-500 border-y border-r border-purple-200 shadow-sm bg-purple-50/50 overflow-hidden mb-2 transition-all">
       {/* Header */}
       <div 
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-3 p-3 cursor-pointer hover:bg-purple-50 transition-colors select-none"
+        className="flex items-center gap-3 p-3 cursor-pointer hover:bg-purple-100 transition-colors select-none"
       >
-        <button className="text-purple-400">
-            {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <button className="text-purple-400 hover:text-purple-600">
+            {isOpen ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
         </button>
 
-        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-600">
-            <FastForward size={16} fill="currentColor" />
+        <div className="flex items-center justify-center w-10 h-10 rounded-full bg-purple-200 text-purple-700 shadow-sm">
+            <FastForward size={20} fill="currentColor" />
         </div>
 
         <div className="flex-1">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                Turbo Download Records
-                <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200 uppercase tracking-wide">
-                    {count} Papers
+            <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-purple-900">Turbo Batch Download</h3>
+                <span className="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold shadow-sm">
+                    {count} PAPERS
                 </span>
-            </h3>
-            <p className="text-xs text-slate-500">
-                Auto-qualified via Turbo Mode (AI Analysis Skipped)
+            </div>
+            <p className="text-xs text-purple-700/70 mt-0.5">
+                AI Analysis Skipped (High Confidence Lock)
             </p>
         </div>
 
-        <div className="hidden sm:flex flex-col items-end text-[10px] font-mono text-slate-400 mr-4">
-            <div>Avg Vec: <span className="text-slate-600 font-bold">{avgVec.toFixed(2)}</span></div>
-            <div>Avg Comp: <span className="text-slate-600 font-bold">{avgComp.toFixed(2)}</span></div>
+        <div className="hidden sm:flex flex-col items-end text-[10px] font-mono text-purple-400 mr-4">
+            <div>Avg Vec: <span className="text-purple-800 font-bold">{avgVec.toFixed(2)}</span></div>
+            <div>Avg Comp: <span className="text-purple-800 font-bold">{avgComp.toFixed(2)}</span></div>
         </div>
 
-        <div className="bg-white p-2 rounded-full border border-purple-100 shadow-sm">
-             <Download size={16} className="text-purple-600" />
+        <div className="bg-white p-2 rounded-full border border-purple-200 shadow-sm hover:bg-purple-50 hover:border-purple-300">
+             <Download size={18} className="text-purple-600" />
         </div>
       </div>
 
       {/* Expanded List */}
       {isOpen && (
-          <div className="border-t border-purple-100 bg-white">
+          <div className="border-t border-purple-200 bg-white animate-fadeIn">
               <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
                   {data.items.map((item, idx) => (
                       <div key={idx} className="p-3 hover:bg-slate-50 flex items-start gap-3">
                           <div className="mt-0.5">
-                              <CheckCircle2 size={14} className="text-purple-400" />
+                              <CheckCircle2 size={14} className="text-purple-500" />
                           </div>
                           <div className="flex-1 min-w-0">
                               <div className="text-xs font-bold text-slate-700 truncate">{item.paper.title}</div>

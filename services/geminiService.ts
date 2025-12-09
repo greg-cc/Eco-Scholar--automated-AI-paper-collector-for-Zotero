@@ -231,7 +231,9 @@ export class GeminiService implements AIService {
       const clampedScore = Math.min(rawScore, 10);
       const aiQualified = !!json.qualified;
       
-      const isQualified = aiQualified || (rawScore >= 6);
+      // LOGIC FIX:
+      // If score is high (>=5) OR Probability is high (>=5), FORCE qualified to true.
+      const isQualified = aiQualified || (rawScore >= 5) || ((json.probability ?? 0) >= 5);
 
       return {
         qualified: isQualified, 
