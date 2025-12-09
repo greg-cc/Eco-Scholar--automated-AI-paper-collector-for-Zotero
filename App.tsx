@@ -325,216 +325,216 @@ const App: React.FC = () => {
               throw new Error(`Failed to generate embedding for query: "${queryTerm}". Check Ollama status.`);
           }
           
-          const rawPapers = await searchPapers(queryTerm, 'PubMed', signal);
-          const uniquePapers = Array.from(new Map(rawPapers.map(p => [p.id, p])).values());
+          // --- PAGINATED FETCHING LOOP ---
+          let currentOffset = currentItem.startRec || 0;
+          const maxRecords = currentItem.stopRec || 1000;
+          const BATCH_SIZE = 20;
 
-          for (const paper of uniquePapers) {
-            if (signal.aborted) throw new Error("Cancelled by user");
+          while (currentOffset < maxRecords) {
+             if (signal.aborted) throw new Error("Cancelled by user");
+             if (failFastTriggered) break;
 
-            queryScannedCount++;
-            setStats(prev => ({ ...prev, totalScanned: prev.totalScanned + 1 }));
+             // Fetch next batch of papers
+             const fetchLimit = Math.min(BATCH_SIZE, maxRecords - currentOffset);
+             const rawPapers = await searchPapers(queryTerm, 'PubMed', signal, currentOffset, fetchLimit);
+             
+             if (rawPapers.length === 0) break; // API returned no more results
 
-            // Fail Fast Check
-            if (config.failFast && queryScannedCount > config.turboThresholdCount + 1) {
-                const checkedCount = queryScannedCount - 1;
-                const currentYield = queryQualifiedCount / checkedCount;
+             const uniquePapers = Array.from(new Map(rawPapers.map(p => [p.id, p])).values());
+
+             for (const paper of uniquePapers) {
+                if (signal.aborted) throw new Error("Cancelled by user");
                 
-                if (currentYield < config.turboQualifyRate) {
-                     const yieldPercent = (currentYield * 100).toFixed(1) + '%';
-                     
-                     // Construct a proper ProcessingResult for skipped items
-                     const failFastResult: ProcessingResult = {
-                         paperId: `failfast-${paper.id}`,
-                         querySource: queryTerm,
-                         vectorScore: 0,
-                         compositeScore: 0,
-                         matches: [],
-                         passedVectorFilter: false,
-                         passedCompositeFilter: false,
-                         skippedAi: true,
-                         status: 'SKIPPED_FAIL_FAST',
-                         vectorMin: itemVecMin,
-                         compositeMin: itemCompMin,
-                         probabilityMin: itemProbMin
-                     };
+                // Break out of inner loop if we triggered fail fast previously
+                if (failFastTriggered) break; 
 
-                     setResults(prev => [...prev, { 
-                        type: 'PAPER',
-                        data: {
-                            paper: { ...paper, title: `Fail Fast: Aborted '${queryTerm}' (Yield ${yieldPercent} < Target ${(config.turboQualifyRate * 100).toFixed(0)}%)` }, 
-                            result: failFastResult
+                queryScannedCount++;
+                setStats(prev => ({ ...prev, totalScanned: prev.totalScanned + 1 }));
+
+                // --- Analysis Logic ---
+                const paperText = `${paper.title} ${paper.abstract}`;
+                let vectorScore = 0;
+                let paperVector: number[] | null = null;
+                
+                // 1. Vector Score
+                if (queryVector) {
+                    paperVector = await aiServiceRef.current!.getEmbedding(paperText, signal);
+                    if (paperVector) {
+                        vectorScore = cosineSimilarity(queryVector, paperVector);
+                    }
+                }
+
+                // 2. Composite Score (Updated to Average Top 6)
+                let compositeScore = 0;
+                const matches: any[] = [];
+                const ruleScores: number[] = [];
+                
+                if (paperVector && validSentenceVectors.length > 0) {
+                    for (const sv of validSentenceVectors) {
+                        const similarity = cosineSimilarity(sv.vector, paperVector);
+                        const weightedScore = sv.positive ? similarity : -similarity;
+                        ruleScores.push(weightedScore);
+
+                        if (similarity > 0.35) { 
+                            matches.push({
+                                sentenceId: sv.id,
+                                sentence: sv.text,
+                                tag: sv.customTag,
+                                netScore: weightedScore,
+                                rawScore: similarity
+                            });
                         }
-                     }]);
-                     
-                     updateQueueStatus(i, 'NEEDS_ADJUSTMENT', { yield: yieldPercent });
-                     failFastTriggered = true;
-                     break; // Break paper loop
-                }
-            }
-
-            // --- Analysis Logic ---
-            const paperText = `${paper.title} ${paper.abstract}`;
-            let vectorScore = 0;
-            let paperVector: number[] | null = null;
-            
-            // 1. Vector Score
-            if (queryVector) {
-                paperVector = await aiServiceRef.current!.getEmbedding(paperText, signal);
-                if (paperVector) {
-                    vectorScore = cosineSimilarity(queryVector, paperVector);
-                }
-            }
-
-            // 2. Composite Score (Updated to Average Top 6)
-            let compositeScore = 0;
-            const matches: any[] = [];
-            const ruleScores: number[] = [];
-            
-            if (paperVector && validSentenceVectors.length > 0) {
-                for (const sv of validSentenceVectors) {
-                    const similarity = cosineSimilarity(sv.vector, paperVector);
-                    // Weight: Positive rules add score, Negative rules subtract score
-                    const weightedScore = sv.positive ? similarity : -similarity;
-                    ruleScores.push(weightedScore);
-
-                    if (similarity > 0.35) { // Log significant raw matches
-                        matches.push({
-                            sentenceId: sv.id,
-                            sentence: sv.text,
-                            tag: sv.customTag,
-                            netScore: weightedScore,
-                            rawScore: similarity
-                        });
                     }
-                }
 
-                // SORT and AVERAGE TOP 6
-                // This converts the cumulative sum into a normalized score (approx -1 to 1)
-                ruleScores.sort((a, b) => b - a); // Descending
-                const top6 = ruleScores.slice(0, 6);
-                const sumTop6 = top6.reduce((acc, val) => acc + val, 0);
+                    // SORT and AVERAGE TOP 6
+                    ruleScores.sort((a, b) => b - a); // Descending
+                    const top6 = ruleScores.slice(0, 6);
+                    const sumTop6 = top6.reduce((acc, val) => acc + val, 0);
+                    compositeScore = sumTop6 / 6;
+                }
                 
-                // Divisor is 6 (User request: "Divide by 6")
-                // If fewer than 6 rules exist, this logic penalizes the score, which is safe.
-                compositeScore = sumTop6 / 6;
-            }
-            
-            // Normalize composite score to be positive for filtering (shift by assumption that min is 0 in UI)
-            // But here we just use raw summation. 
-            // If user has many negative rules, score could be negative.
-            
-            const passedVector = vectorScore >= itemVecMin;
-            const passedComposite = compositeScore >= itemCompMin;
-            
-            // LOGIC CHANGE: Use OR logic (Union) instead of AND (Intersection)
-            // If the paper passes the Vector query threshold OR the Semantic Composite threshold, it proceeds.
-            // This prevents "High Quality" papers (high vector match) from being filtered just because they 
-            // failed the semantic rules (negative composite score).
-            const passedPreFilter = passedVector || passedComposite;
-            
-            if (passedPreFilter) {
-                setStats(prev => ({ ...prev, passedVector: prev.passedVector + 1 }));
-            }
+                const passedVector = vectorScore >= itemVecMin;
+                const passedComposite = compositeScore >= itemCompMin;
+                const passedPreFilter = passedVector || passedComposite;
+                
+                if (passedPreFilter) {
+                    setStats(prev => ({ ...prev, passedVector: prev.passedVector + 1 }));
+                }
 
-            // 3. AI Analysis Decision (Turbo Logic)
-            let aiAnalysis: any = undefined;
-            let status: ProcessingResult['status'] = 'FILTERED_OUT';
-            let skippedAi = true;
-            let turboActiveForThis = false;
+                // 3. AI Analysis Decision (Turbo Logic)
+                let aiAnalysis: any = undefined;
+                let status: ProcessingResult['status'] = 'FILTERED_OUT';
+                let skippedAi = true;
+                let turboActiveForThis = false;
 
-            if (passedPreFilter) {
-                 cycleRef.current.processedForTurbo++;
-                 
-                 // Turbo Check
-                 const turboYield = cycleRef.current.processedForTurbo > 0 
-                    ? cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo 
-                    : 0;
-                 turboActiveForThis = cycleRef.current.processedForTurbo > config.turboThresholdCount && turboYield >= config.turboQualifyRate;
+                if (passedPreFilter) {
+                    cycleRef.current.processedForTurbo++;
+                    
+                    // Turbo Check
+                    const turboYield = cycleRef.current.processedForTurbo > 0 
+                        ? cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo 
+                        : 0;
+                    turboActiveForThis = cycleRef.current.processedForTurbo > config.turboThresholdCount && turboYield >= config.turboQualifyRate;
 
-                 if (turboActiveForThis) {
-                     status = 'QUALIFIED_TURBO';
-                     skippedAi = true;
-                     setStats(prev => ({ ...prev, qualified: prev.qualified + 1, turboModeActive: true, energySaved: prev.energySaved + 1 }));
-                     queryQualifiedCount++;
-                     // Fix: Keep yield high to maintain Turbo Mode activation (Assumption: Skipped papers are qualified)
-                     cycleRef.current.qualifiedForTurbo++;
-                 } else {
-                     skippedAi = false;
-                     setStats(prev => ({ ...prev, aiAnalyzed: prev.aiAnalyzed + 1 }));
-                     
-                     // Run AI
-                     aiAnalysis = await aiServiceRef.current!.analyzePaper(paper, config.gradingTopics, signal);
-                     
-                     // Check Probability Threshold
-                     if (aiAnalysis.qualified && aiAnalysis.probability >= itemProbMin) {
-                         status = 'QUALIFIED';
-                         cycleRef.current.qualifiedForTurbo++;
-                         setStats(prev => ({ ...prev, qualified: prev.qualified + 1 }));
-                         queryQualifiedCount++;
-                     } else {
-                         status = 'AI_REJECTED';
-                     }
-                 }
-            }
-
-            // Capture Statistics for UI (After updates)
-            const currentTurboStats = {
-                processed: cycleRef.current.processedForTurbo,
-                qualified: cycleRef.current.qualifiedForTurbo,
-                yield: cycleRef.current.processedForTurbo > 0 
-                    ? cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo 
-                    : 0,
-                active: turboActiveForThis
-            };
-
-            const result: ProcessingResult = {
-                paperId: paper.id,
-                querySource: queryTerm,
-                vectorScore,
-                compositeScore,
-                matches: matches.sort((a,b) => b.rawScore - a.rawScore).slice(0, 3),
-                passedVectorFilter: passedVector,
-                passedCompositeFilter: passedComposite,
-                vectorMin: itemVecMin,
-                compositeMin: itemCompMin,
-                probabilityMin: itemProbMin,
-                aiAnalysis,
-                skippedAi,
-                status,
-                turboStatistics: currentTurboStats
-            };
-
-            // RESULT HANDLING: Group Turbo records or add normally
-            if (status === 'QUALIFIED_TURBO') {
-                setResults(prev => {
-                    const last = prev[prev.length - 1];
-                    // If the last item is already a TURBO_GROUP for this query cycle, append to it
-                    if (last && last.type === 'TURBO_GROUP' && last.data.cycleId === headerId) {
-                        const updatedGroup: FeedItem = {
-                            type: 'TURBO_GROUP',
-                            data: {
-                                ...last.data,
-                                items: [...last.data.items, { paper, result }]
-                            }
-                        };
-                        return [...prev.slice(0, -1), updatedGroup];
+                    if (turboActiveForThis) {
+                        status = 'QUALIFIED_TURBO';
+                        skippedAi = true;
+                        setStats(prev => ({ ...prev, qualified: prev.qualified + 1, turboModeActive: true, energySaved: prev.energySaved + 1 }));
+                        queryQualifiedCount++;
+                        cycleRef.current.qualifiedForTurbo++;
                     } else {
-                        // Start a new TURBO_GROUP
-                        return [...prev, {
-                            type: 'TURBO_GROUP',
-                            data: {
-                                id: `turbo-group-${Date.now()}`,
-                                cycleId: headerId,
-                                items: [{ paper, result }]
-                            }
-                        }];
+                        skippedAi = false;
+                        setStats(prev => ({ ...prev, aiAnalyzed: prev.aiAnalyzed + 1 }));
+                        
+                        // Run AI
+                        aiAnalysis = await aiServiceRef.current!.analyzePaper(paper, config.gradingTopics, signal);
+                        
+                        // Check Probability Threshold
+                        if (aiAnalysis.qualified && aiAnalysis.probability >= itemProbMin) {
+                            status = 'QUALIFIED';
+                            cycleRef.current.qualifiedForTurbo++;
+                            setStats(prev => ({ ...prev, qualified: prev.qualified + 1 }));
+                            queryQualifiedCount++;
+                        } else {
+                            status = 'AI_REJECTED';
+                        }
                     }
-                });
-            } else {
-                // Standard Paper or Filtered/Rejected item
-                setResults(prev => [...prev, { type: 'PAPER', data: { paper, result } }]);
-            }
-          }
+
+                    // --- FAIL FAST CHECK (Updated) ---
+                    // Only trigger if we have enough CANDIDATES (passed filters) to judge the stream quality.
+                    // This ensures we keep downloading until we get 'turboThresholdCount' papers that actually hit the AI.
+                    if (config.failFast && !turboActiveForThis && cycleRef.current.processedForTurbo > config.turboThresholdCount + 1) {
+                        const currentYield = cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo;
+                        
+                        if (currentYield < config.turboQualifyRate) {
+                             const yieldPercent = (currentYield * 100).toFixed(1) + '%';
+                             
+                             const failFastResult: ProcessingResult = {
+                                 paperId: `failfast-${paper.id}`,
+                                 querySource: queryTerm,
+                                 vectorScore: 0,
+                                 compositeScore: 0,
+                                 matches: [],
+                                 passedVectorFilter: false,
+                                 passedCompositeFilter: false,
+                                 skippedAi: true,
+                                 status: 'SKIPPED_FAIL_FAST',
+                                 vectorMin: itemVecMin,
+                                 compositeMin: itemCompMin,
+                                 probabilityMin: itemProbMin
+                             };
+    
+                             setResults(prev => [...prev, { 
+                                type: 'PAPER',
+                                data: {
+                                    paper: { ...paper, title: `Fail Fast: Aborted '${queryTerm}' (Yield ${yieldPercent} < Target ${(config.turboQualifyRate * 100).toFixed(0)}%)` }, 
+                                    result: failFastResult
+                                }
+                             }]);
+                             
+                             updateQueueStatus(i, 'NEEDS_ADJUSTMENT', { yield: yieldPercent });
+                             failFastTriggered = true;
+                        }
+                    }
+                }
+
+                // Capture Statistics for UI
+                const currentTurboStats = {
+                    processed: cycleRef.current.processedForTurbo,
+                    qualified: cycleRef.current.qualifiedForTurbo,
+                    yield: cycleRef.current.processedForTurbo > 0 
+                        ? cycleRef.current.qualifiedForTurbo / cycleRef.current.processedForTurbo 
+                        : 0,
+                    active: turboActiveForThis
+                };
+
+                const result: ProcessingResult = {
+                    paperId: paper.id,
+                    querySource: queryTerm,
+                    vectorScore,
+                    compositeScore,
+                    matches: matches.sort((a,b) => b.rawScore - a.rawScore).slice(0, 3),
+                    passedVectorFilter: passedVector,
+                    passedCompositeFilter: passedComposite,
+                    vectorMin: itemVecMin,
+                    compositeMin: itemCompMin,
+                    probabilityMin: itemProbMin,
+                    aiAnalysis,
+                    skippedAi,
+                    status,
+                    turboStatistics: currentTurboStats
+                };
+
+                // RESULT HANDLING: Group Turbo records or add normally
+                if (status === 'QUALIFIED_TURBO') {
+                    setResults(prev => {
+                        const last = prev[prev.length - 1];
+                        if (last && last.type === 'TURBO_GROUP' && last.data.cycleId === headerId) {
+                            const updatedGroup: FeedItem = {
+                                type: 'TURBO_GROUP',
+                                data: { ...last.data, items: [...last.data.items, { paper, result }] }
+                            };
+                            return [...prev.slice(0, -1), updatedGroup];
+                        } else {
+                            return [...prev, {
+                                type: 'TURBO_GROUP',
+                                data: {
+                                    id: `turbo-group-${Date.now()}`,
+                                    cycleId: headerId,
+                                    items: [{ paper, result }]
+                                }
+                            }];
+                        }
+                    });
+                } else {
+                    setResults(prev => [...prev, { type: 'PAPER', data: { paper, result } }]);
+                }
+             } // End Inner Loop (Papers)
+             
+             // Increment Offset for Pagination
+             currentOffset += rawPapers.length;
+
+          } // End While Loop (Pagination)
 
           if (!failFastTriggered) {
               const yieldP = queryScannedCount > 0 ? ((queryQualifiedCount / queryScannedCount) * 100).toFixed(1) + '%' : '0%';

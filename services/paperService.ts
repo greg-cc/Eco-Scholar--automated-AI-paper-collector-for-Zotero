@@ -1,14 +1,20 @@
 
 import { Paper } from "../types";
 
-export async function searchPapers(query: string, source: 'SemanticScholar' | 'PubMed', signal?: AbortSignal): Promise<Paper[]> {
+export async function searchPapers(
+    query: string, 
+    source: 'SemanticScholar' | 'PubMed', 
+    signal?: AbortSignal, 
+    retstart: number = 0, 
+    retmax: number = 20
+): Promise<Paper[]> {
   
   // Real PubMed Fetching
   if (source === 'PubMed') {
       try {
            const encodedQuery = encodeURIComponent(query);
-           // 1. Search IDs
-           const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodedQuery}&retmode=json&retmax=20`;
+           // 1. Search IDs with pagination
+           const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodedQuery}&retmode=json&retstart=${retstart}&retmax=${retmax}`;
            const searchRes = await fetch(searchUrl, { signal });
            const searchJson = await searchRes.json();
            const ids = searchJson.esearchresult?.idlist || [];
@@ -16,7 +22,6 @@ export async function searchPapers(query: string, source: 'SemanticScholar' | 'P
            if (ids.length === 0) return [];
 
            // 2. Fetch Details (XML for abstracts)
-           // efetch is used because esummary often truncates or omits abstracts
            const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(',')}&retmode=xml`;
            const fetchRes = await fetch(fetchUrl, { signal });
            const textData = await fetchRes.text();
@@ -54,7 +59,7 @@ export async function searchPapers(query: string, source: 'SemanticScholar' | 'P
                   });
                }
            }
-           console.log(`Fetched ${papers.length} papers from PubMed`);
+           console.log(`Fetched ${papers.length} papers from PubMed (Offset: ${retstart})`);
            return papers;
 
       } catch (e) {
@@ -69,7 +74,7 @@ export async function searchPapers(query: string, source: 'SemanticScholar' | 'P
   // Fallback / Semantic Scholar Mock
   // Simulate network delay
   await new Promise((resolve, reject) => {
-      const timeout = setTimeout(resolve, 1000);
+      const timeout = setTimeout(resolve, 800);
       if (signal) {
           signal.addEventListener('abort', () => {
               clearTimeout(timeout);
@@ -81,11 +86,13 @@ export async function searchPapers(query: string, source: 'SemanticScholar' | 'P
   const keywords = query.split(' ');
   const topic = keywords[0] || "General";
   
-  const results: Paper[] = Array.from({ length: 20 }).map((_, i) => {
+  // Generate mock results respecting pagination count
+  const results: Paper[] = Array.from({ length: retmax }).map((_, i) => {
+    const globalIdx = retstart + i;
     const isRelevant = Math.random() > 0.4; 
     const isMedical = Math.random() > 0.3;
     
-    let title = `Study ${i + 1}: `;
+    let title = `Study ${globalIdx + 1}: `;
     let abstract = "";
 
     if (isRelevant) {
@@ -100,14 +107,14 @@ export async function searchPapers(query: string, source: 'SemanticScholar' | 'P
     }
 
     return {
-      id: `${source.toLowerCase()}-${Date.now()}-${i}`,
+      id: `${source.toLowerCase()}-${Date.now()}-${globalIdx}`,
       title: title,
       abstract: abstract,
-      authors: [`Author ${String.fromCharCode(65+i)}`, `Researcher ${i}`],
+      authors: [`Author ${String.fromCharCode(65 + (i % 26))}`, `Researcher ${globalIdx}`],
       year: 2020 + Math.floor(Math.random() * 5),
-      url: `https://example.com/paper/${i}`,
+      url: `https://example.com/paper/${globalIdx}`,
       source: source,
-      doi: `10.1000/${i}`
+      doi: `10.1000/${globalIdx}`
     };
   });
 

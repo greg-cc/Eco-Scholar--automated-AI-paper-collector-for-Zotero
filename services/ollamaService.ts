@@ -363,13 +363,42 @@ export class OllamaService implements AIService {
       possible_plants: string;
       probability: number;
   }> {
-    try {
-      const topicsStr = gradingTopics.length > 0 ? gradingTopics.join(", ") : "Phytochemicals, Herbal Medicine, Natural Extracts";
-      const isOpenThinker = this.genModel.includes('openthinker');
+    const topicsStr = gradingTopics.length > 0 ? gradingTopics.join(", ") : "Phytochemicals, Herbal Medicine, Natural Extracts";
 
-      // TIGHTER PROMPT: Enforces strict JSON, stop tokens, and no preamble.
-      // Based on User feedback to prevent hallucinations by closing the abstract context.
-      const coreInstructions = `
+    // --- Helper to execute a single inference run ---
+    const runInference = async (promptText: string) => {
+        const isOpenThinker = this.genModel.includes('openthinker');
+        let finalPrompt = promptText;
+        if (isOpenThinker) {
+            finalPrompt = `<|im_start|>system\nYou are a research analysis engine. Output strict JSON.\n<|im_end|>\n<|im_start|>user\n${promptText}\n<|im_end|>\n<|im_start|>assistant\n`;
+        }
+
+        const data = await this.fetchWithCORSCheck(
+            `${this.baseUrl}/api/generate`,
+            {
+                method: 'POST',
+                body: {
+                    model: this.genModel,
+                    prompt: finalPrompt,
+                    format: "json",
+                    stream: true,
+                    options: { 
+                        stop: ["<|im_end|>", "<|endoftext|>", "</s>"]
+                    }
+                }
+            },
+            "Ollama Analysis Error",
+            signal
+        );
+
+        const cleanedResponse = this.cleanThinkTags(data.response);
+        const jsonText = cleanedResponse.replace(/```json|```/g, '').trim();
+        return JSON.parse(jsonText);
+    };
+
+    // --- Prompt Builder ---
+    const buildPrompt = (isRetry: boolean = false) => {
+        let prompt = `
         Analyze the following scientific paper and return valid JSON.
         
         PAPER DATA
@@ -377,62 +406,58 @@ export class OllamaService implements AIService {
         Abstract: ${paper.abstract}
 
         CRITERIA
-        The paper must be highly relevant to: ${topicsStr}
+        The paper has passed semantic pre-screening and MUST be evaluated for relevance to: ${topicsStr}
+        
+        SCORING GUIDELINES
+        - "score": Overall relevance to the topics (0-10).
+        - "probability": DISCOVERY PROBABILITY (0-10).
+           - 0: FALSE POSITIVE. Completely irrelevant (e.g. software, administration, geology).
+           - 1-4: General Mention/Review.
+           - 5-10: RELEVANT. Specific plants/compounds mentioned in a medical/biological context.
+           
+        IMPORTANT: If the abstract mentions specific plants, extracts, or phytochemicals being tested or discussed, 'probability' MUST be at least 5. Do not rate as 0 if keywords are present.
 
         REQUIRED JSON FORMAT
         {
-            "score": 0, // 0-10 Relevance
-            "qualified": false, // boolean
+            "score": 0, 
+            "qualified": false, 
             "summary": "Markdown bullets: Mechanistic Insight, Evidence Gap, Clinical Relevance",
             "tags": ["tag1", "tag2"],
             "phytochemicals": "List or 'None'",
             "plants": "List or 'None'",
             "possible_plants": "List or 'None'",
-            "probability": 0 // 0-10 Novelty
+            "probability": 0 
         }
         
-        Respond with JSON only. No markdown formatting. No conversational text.
-      `;
+        Respond with JSON only.
+        `;
 
-      let finalPrompt = coreInstructions;
-      if (isOpenThinker) {
-          // OpenThinker / DeepSeek template
-          finalPrompt = `<|im_start|>system
-You are a research analysis engine. You output strict JSON only.
-<|im_end|>
-<|im_start|>user
-${coreInstructions}
-<|im_end|>
-<|im_start|>assistant
-`;
-      }
+        if (isRetry) {
+            prompt += `\n\nCRITICAL CORRECTION: You previously assigned a probability of 0 to this paper. This paper passed semantic pre-filters. Please re-read the abstract carefully. If ANY of the target topics are mentioned, the probability CANNOT be 0. Assign a score of at least 5 if specific compounds are named.`;
+        }
+        
+        return prompt;
+    };
 
-      const data = await this.fetchWithCORSCheck(
-        `${this.baseUrl}/api/generate`,
-        {
-          method: 'POST',
-          body: {
-            model: this.genModel,
-            prompt: finalPrompt,
-            format: "json",
-            stream: true, // STREAMING ENABLED to capture thought process in logs
-            options: { 
-                stop: ["<|im_end|>", "<|endoftext|>", "</s>"] // Hard stops to prevent hallucination
-            }
+    try {
+      // 1. Initial Attempt
+      let json = await runInference(buildPrompt(false));
+
+      // 2. Retry Logic: If Score is 0, it might be a hallucination/error given pre-filtering passed
+      if (json.probability === 0) {
+          console.log(`[Ollama] Paper '${paper.title.substring(0,20)}...' got 0 probability. Retrying with correction...`);
+          try {
+              const retryJson = await runInference(buildPrompt(true));
+              // Only accept retry if it actually found something positive
+              if (retryJson.probability > 0) {
+                  console.log(`[Ollama] Retry successful. Score adjusted to ${retryJson.probability}.`);
+                  json = retryJson;
+              } else {
+                  console.log(`[Ollama] Retry confirmed 0 probability.`);
+              }
+          } catch (retryErr) {
+              console.warn("Retry failed, using original result", retryErr);
           }
-        },
-        "Ollama Analysis Error",
-        signal
-      );
-
-      const cleanedResponse = this.cleanThinkTags(data.response);
-      const jsonText = cleanedResponse.replace(/```json|```/g, '').trim();
-
-      let json;
-      try {
-        json = JSON.parse(jsonText);
-      } catch (e) {
-          throw new Error("Failed to parse JSON response: " + jsonText.substring(0, 50) + "...");
       }
 
       // SAFE CASTING HELPER: Ensures we always work with strings, even if AI returns arrays/numbers

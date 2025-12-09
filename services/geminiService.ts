@@ -120,85 +120,99 @@ export class GeminiService implements AIService {
       possible_plants: string;
       probability: number;
   }> {
-    try {
-      const topicsStr = gradingTopics.length > 0 ? gradingTopics.join(", ") : "Phytochemicals, Herbal Medicine, Natural Extracts";
+    const topicsStr = gradingTopics.length > 0 ? gradingTopics.join(", ") : "Phytochemicals, Herbal Medicine, Natural Extracts";
 
-      const prompt = `
+    const runInference = async (prompt: string) => {
+        const response = await this.retryWithBackoff(() => this.client.models.generateContent({
+            model: this.modelId,
+            contents: prompt,
+            config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                score: { 
+                    type: Type.NUMBER, 
+                    description: "Relevance Score 0-10. 0=Irrelevant, 10=Perfect Match" 
+                },
+                qualified: { 
+                    type: Type.BOOLEAN, 
+                    description: "True if score >= 6 AND relevant to specified topics" 
+                },
+                summary: { 
+                    type: Type.STRING, 
+                    description: "Concise bullet points summarizing the paper." 
+                },
+                tags: { 
+                    type: Type.ARRAY, 
+                    items: { type: Type.STRING },
+                    description: "List of relevant keywords"
+                },
+                phytochemicals: { 
+                    type: Type.STRING,
+                    description: "Comma separated list of specific chemicals found. Return 'None' if empty."
+                },
+                plants: { 
+                    type: Type.STRING,
+                    description: "Comma separated list of specific plants found. Return 'None' if empty."
+                },
+                possible_plants: { 
+                    type: Type.STRING,
+                    description: "List plants/compounds with reasoning if inferred. Return 'None' if empty."
+                },
+                probability: { 
+                    type: Type.INTEGER, 
+                    description: "Integer 0-10. Probability this is a specific/novel finding. 0=Irrelevant, 5=Relevant, 10=Novel" 
+                }
+                },
+                required: ["score", "qualified", "summary", "tags", "phytochemicals", "plants", "possible_plants", "probability"]
+            }
+            }
+        })) as GenerateContentResponse;
+
+        const jsonText = this.cleanThinkTags(response.text || "{}");
+        return JSON.parse(jsonText);
+    };
+
+    const buildPrompt = (isRetry: boolean = false) => {
+        let prompt = `
         Analyze this scientific paper for a structured report.
         Title: ${paper.title}
         Abstract: ${paper.abstract}
 
-        The paper MUST be highly relevant to at least one of the following topics/compounds to be qualified:
-        ${topicsStr}
+        CRITERIA
+        The paper has passed semantic pre-screening and MUST be evaluated for relevance to: ${topicsStr}
 
-        You are an expert research analyst. Evaluate the "Discovery Probability" carefully.
-        - If the paper discusses a generic review or irrelevant topic, probability is low (0-3).
-        - If it discusses a known effect of these compounds, probability is medium (4-6).
-        - If it identifies a NEW bioactive compound or a NEW therapeutic application of these topics, probability is high (7-10).
+        SCORING GUIDELINES
+        - "score": Overall relevance (0-10).
+        - "probability": DISCOVERY PROBABILITY (0-10).
+           - 0: FALSE POSITIVE. Completely irrelevant (e.g. software, administration, geology).
+           - 1-4: General Mention/Review.
+           - 5-10: RELEVANT. Specific plants/compounds mentioned in a medical/biological context.
+           
+        IMPORTANT: If the abstract mentions specific plants, extracts, or phytochemicals being tested or discussed, 'probability' MUST be at least 5. Do not rate as 0 if keywords are present.
       `;
+      if (isRetry) {
+          prompt += `\n\nCRITICAL CORRECTION: You previously assigned a probability of 0 to this paper. This paper passed semantic pre-filters. Please re-read the abstract carefully. If ANY of the target topics are mentioned, the probability CANNOT be 0.`;
+      }
+      return prompt;
+    };
 
-      // Wrap analysis call with retry
-      const response = await this.retryWithBackoff(() => this.client.models.generateContent({
-        model: this.modelId,
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              score: { 
-                type: Type.NUMBER, 
-                description: "Relevance Score 0-10. 0=Irrelevant, 10=Perfect Match" 
-              },
-              // We rely on 'qualified' for Turbo, but for logic we check lists. 
-              // We let the model decide qualified based on topic relevance primarily.
-              qualified: { 
-                type: Type.BOOLEAN, 
-                description: "True if score >= 6 AND relevant to specified topics" 
-              },
-              summary: { 
-                type: Type.STRING, 
-                description: "Concise bullet points summarizing the paper." 
-              },
-              tags: { 
-                type: Type.ARRAY, 
-                items: { type: Type.STRING },
-                description: "List of relevant keywords"
-              },
-              phytochemicals: { 
-                type: Type.STRING,
-                description: "Comma separated list of specific chemicals found. Return 'None' if empty."
-              },
-              plants: { 
-                type: Type.STRING,
-                description: "Comma separated list of specific plants found. Return 'None' if empty."
-              },
-              possible_plants: { 
-                type: Type.STRING,
-                description: "List plants/compounds with reasoning if inferred. Return 'None' if empty."
-              },
-              probability: { 
-                type: Type.INTEGER, 
-                description: "Integer 0-10. Probability this discovers a new use/compound. 0=Old/Generic, 10=Novel Discovery" 
-              }
-            },
-            required: ["score", "qualified", "summary", "tags", "phytochemicals", "plants", "possible_plants", "probability"]
+    try {
+      // 1. Initial Run
+      let json = await runInference(buildPrompt(false));
+
+      // 2. Retry Logic
+      if (json.probability === 0) {
+          console.log(`[Gemini] Score 0 detected. Retrying with correction...`);
+          try {
+             const retryJson = await runInference(buildPrompt(true));
+             if (retryJson.probability > 0) {
+                 json = retryJson;
+             }
+          } catch(e) {
+             console.warn("Retry failed");
           }
-        }
-      })) as GenerateContentResponse;
-
-      // With responseSchema, the text is guaranteed to be valid JSON matching the schema
-      const jsonText = this.cleanThinkTags(response.text || "{}");
-      
-      let json;
-      try {
-        json = JSON.parse(jsonText);
-      } catch (e) {
-        console.error("JSON Parse Error", e);
-        return { 
-            qualified: false, score: 0, summary: "Analysis Parse Error", tags: [],
-            phytochemicals: "None", plants: "None", possible_plants: "None", probability: 0
-        };
       }
 
       // SAFE CASTING HELPER: Ensures we always work with strings
@@ -213,9 +227,6 @@ export class GeminiService implements AIService {
       const plantsStr = safeString(json.plants);
       const possibleStr = safeString(json.possible_plants);
       
-      // LOGIC FIX:
-      // 1. Clamp score to 10 max
-      // 2. If score is high (>=6), FORCE qualified to true, overcoming AI boolean hallucination
       const rawScore = json.score ?? 0;
       const clampedScore = Math.min(rawScore, 10);
       const aiQualified = !!json.qualified;
