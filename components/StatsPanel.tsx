@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { CycleStats } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
@@ -41,16 +42,16 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ stats }) => {
         <div className="text-xs text-slate-400">Passed semantic filter</div>
       </div>
 
-      <div className={stats.turboModeActive ? "bg-gradient-to-br from-yellow-50 to-orange-50 p-4 rounded-xl shadow-sm border border-orange-200 flex flex-col justify-between" : "bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between"}>
+      <div className={stats.speedupActive ? "bg-gradient-to-br from-yellow-50 to-orange-50 p-4 rounded-xl shadow-sm border border-orange-200 flex flex-col justify-between" : "bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between"}>
         <div className="flex items-center gap-2 text-slate-500 mb-2">
-            <Zap size={18} className={stats.turboModeActive ? "text-orange-500 fill-orange-500 animate-pulse" : ""} />
-            <span className="text-sm font-medium">Turbo Status</span>
+            <Zap size={18} className={stats.speedupActive ? "text-orange-500 fill-orange-500 animate-pulse" : ""} />
+            <span className="text-sm font-medium">Smart Speedup</span>
         </div>
-        <div className={`text-xl font-bold ${stats.turboModeActive ? "text-orange-600" : "text-slate-400"}`}>
-            {stats.turboModeActive ? "ACTIVE" : "INACTIVE"}
+        <div className={`text-xl font-bold ${stats.speedupActive ? "text-orange-600" : "text-slate-400"}`}>
+            {stats.speedupActive ? "ACTIVE" : "INACTIVE"}
         </div>
         <div className="text-xs text-slate-500">
-            {stats.turboModeActive ? "Saving electricity!" : "Verifying accuracy..."}
+            {stats.speedupActive ? "Skipping AI (High Confidence)" : "Verifying accuracy..."}
         </div>
       </div>
 

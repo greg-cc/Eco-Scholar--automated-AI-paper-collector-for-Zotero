@@ -42,15 +42,15 @@ export interface ProcessingResult {
     possible_plants?: string;
     probability?: number;
   };
-  skippedAi: boolean; // True if Turbo Mode skipped the AI check
-  status: 'FILTERED_OUT' | 'PENDING_AI' | 'AI_REJECTED' | 'QUALIFIED' | 'QUALIFIED_TURBO' | 'SKIPPED_FAIL_FAST';
+  skippedAi: boolean; // True if Smart Speedup skipped the AI check
+  status: 'FILTERED_OUT' | 'PENDING_AI' | 'AI_REJECTED' | 'QUALIFIED' | 'QUALIFIED_SPEEDUP' | 'SKIPPED_FAIL_FAST';
   
   // New Statistics for UI visibility
-  turboStatistics?: {
+  speedupStatistics?: {
     processed: number; // Number of papers that passed pre-filters so far
-    qualified: number; // Number of those that were qualified by AI (or Turbo)
+    qualified: number; // Number of those that were qualified by AI (or Speedup)
     yield: number;     // qualified / processed
-    active: boolean;   // Was Turbo Mode ON for this paper?
+    active: boolean;   // Was Smart Speedup ON for this paper?
   };
 }
 
@@ -85,8 +85,8 @@ export interface AppConfig {
   minProbabilityScore: number; // Threshold for AI Discovery Probability (0-10)
   gradingTopics: string[]; // List of required topics for AI Grading
 
-  turboThresholdCount: number; // e.g., 10 papers to check
-  turboQualifyRate: number; // e.g., 0.7 (70%)
+  speedupSampleCount: number; // e.g., 10 papers to check
+  speedupQualifyRate: number; // e.g., 0.7 (70%)
   failFast: boolean; // If true, skips query if first N papers fail
   semanticSentences: SemanticSentence[];
 }
@@ -96,7 +96,7 @@ export interface CycleStats {
   passedVector: number; // Passed BOTH Vector and Composite pre-filters
   aiAnalyzed: number;
   qualified: number;
-  turboModeActive: boolean;
+  speedupActive: boolean;
   energySaved: number; // Abstract units representing saved Generation calls
 }
 
@@ -139,6 +139,7 @@ export interface CycleHeaderData {
   id: string;
   query: string;
   timestamp: number;
+  totalRecords?: number; // Added totalRecords
   configSnapshot: {
     vectorMin: number;
     compMin: number;
@@ -152,7 +153,7 @@ export interface CycleHeaderData {
     
     speedUp: boolean;
     failFast: boolean;
-    turboThreshold: number;
+    speedupSampleCount: number;
     qualifyRate: number;
     
     collection: string;
@@ -167,10 +168,38 @@ export interface TurboGroupData {
   items: { paper: Paper; result: ProcessingResult }[];
 }
 
+// New Report Interface for Inline Blocks
+export interface CycleCompleteData {
+  id: string;
+  query: string;
+  totalFound: number;
+  qualifiedCount: number;
+  status: 'COMPLETED' | 'FAIL_FAST' | 'HARVEST_DONE';
+  failFastReason?: string;
+  
+  // Context for resumption
+  continuationContext?: {
+      startRec: number;
+      stopRec: number;
+      queryVector: number[] | null;
+      activeSentenceVectors: any[];
+      headerId: string;
+      item: QueueItem;
+  };
+}
+
+export interface HarvestHeaderData {
+    id: string;
+    startRec: number;
+    stopRec: number;
+}
+
 export type FeedItem = 
   | { type: 'HEADER'; data: CycleHeaderData }
   | { type: 'PAPER'; data: { paper: Paper; result: ProcessingResult } }
-  | { type: 'TURBO_GROUP'; data: TurboGroupData };
+  | { type: 'TURBO_GROUP'; data: TurboGroupData }
+  | { type: 'CYCLE_COMPLETE'; data: CycleCompleteData }
+  | { type: 'HARVEST_HEADER'; data: HarvestHeaderData };
 
 // New Interface for Network Debugging
 export interface NetworkLog {
@@ -191,4 +220,16 @@ export interface ZoteroResult {
   paperTitle: string;
   status: 'UPLOADED' | 'DUPLICATE' | 'UNCERTAIN' | 'ERROR';
   details?: string;
+}
+
+// Kept for type compatibility if needed, but unused in new inline flow
+export interface CycleReportData {
+  query: string;
+  totalFound: number;
+  qualifiedCount: number;
+  speedupCount: number;
+  energySaved: number;
+  yieldPercent: number;
+  status: 'COMPLETED' | 'FAIL_FAST';
+  failFastReason?: string;
 }

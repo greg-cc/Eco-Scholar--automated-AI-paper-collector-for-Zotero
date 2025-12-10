@@ -1,20 +1,21 @@
 
 import React from 'react';
 import { QueueItem, AppConfig } from '../types';
-import { PlayCircle, AlertCircle, CheckCircle, Loader2, Edit3, Trash2, Ban } from 'lucide-react';
+import { PlayCircle, AlertCircle, CheckCircle, Loader2, Trash2, Ban, Maximize2 } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface QueuePanelProps {
   queue: QueueItem[];
   onUpdateQueue: (queue: QueueItem[]) => void;
   isProcessing: boolean;
-  onRun: () => void;
+  onRun: (mode: 'single' | 'cycle') => void;
   onCancel: () => void;
+  onExpand: () => void; // New Prop
   config: AppConfig;
 }
 
 const QueuePanel: React.FC<QueuePanelProps> = ({ 
-  queue, onUpdateQueue, isProcessing, onRun, onCancel, config 
+  queue, onUpdateQueue, isProcessing, onRun, onCancel, onExpand, config 
 }) => {
 
   const updateItem = (id: string, field: keyof QueueItem, value: any) => {
@@ -43,9 +44,18 @@ const QueuePanel: React.FC<QueuePanelProps> = ({
       
       {/* Header / Toolbar */}
       <div className="p-3 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-        <div>
-            <h3 className="text-sm font-bold text-slate-800">Execution Queue</h3>
-            <p className="text-[10px] text-slate-500">{queue.length} items • FailFast: {config.failFast ? 'ON' : 'OFF'}</p>
+        <div className="flex items-center gap-2">
+            <div>
+                <h3 className="text-sm font-bold text-slate-800">Execution Queue</h3>
+                <p className="text-[10px] text-slate-500">{queue.length} items • FailFast: {config.failFast ? 'ON' : 'OFF'}</p>
+            </div>
+            <button 
+                onClick={onExpand}
+                className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-blue-600 transition-colors"
+                title="Expand Queue Manager"
+            >
+                <Maximize2 size={14} />
+            </button>
         </div>
         
         {isProcessing ? (
@@ -57,7 +67,7 @@ const QueuePanel: React.FC<QueuePanelProps> = ({
             </button>
         ) : (
             <button 
-                onClick={onRun}
+                onClick={() => onRun('cycle')}
                 disabled={queue.length === 0}
                 className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-bold rounded transition-colors"
             >

@@ -45,24 +45,3 @@ export const DEFAULT_SEMANTIC_SENTENCES: SemanticSentence[] = [
   { id: '17', text: "This contens discusses  Carotenoids OR Plant-Derived OR herbal extracts OR phytochemicals OR  Bioactive OR Phytonutrient OR Biologically Active OR Compounds OR ALKALOIDS OR TCM OR polyphenols OR plant extracts OR dose-dependent OR receptors OR synergistic OR phenolic acids OR  coumarins OR  stilbenes OR Terpenoids OR Terpenes OR Glucosinolates OR Organosulfur OR Phytosterols OR Saponins OR flavonoids", enabled: true, positive: true, customTag: "phytochemicals" },
   { id: '18', text: "The content discusses x-rays or radiation therapy or chemotherapy or radiation sickness", enabled: true, positive: false, customTag: "The" }
 ];
-
-export const MOCK_PAPERS = [
-  {
-    id: 'mock-1',
-    title: 'Efficacy of Artemisinin in Malaria Treatment',
-    abstract: 'This study investigates the effects of artemisinin derivatives on Plasmodium falciparum. Our results show significant reduction in parasitemia.',
-    authors: ['Doe, J.', 'Smith, A.'],
-    year: 2023,
-    url: '#',
-    source: 'PubMed' as const
-  },
-  {
-    id: 'mock-2',
-    title: 'A Review of Modern Architecture',
-    abstract: 'We discuss the evolution of skyscrapers in the 21st century. No medical relevance.',
-    authors: ['Johnson, B.'],
-    year: 2022,
-    url: '#',
-    source: 'SemanticScholar' as const
-  }
-];

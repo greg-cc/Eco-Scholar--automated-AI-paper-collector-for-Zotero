@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Paper, ProcessingResult } from '../types';
-import { Check, X, AlertTriangle, ChevronRight, ChevronDown, PenTool, Leaf, FlaskConical, Sprout } from 'lucide-react';
+import { Check, X, AlertTriangle, ChevronRight, ChevronDown, PenTool, Leaf, FlaskConical, Sprout, FastForward } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface PaperCardProps {
@@ -12,10 +12,10 @@ interface PaperCardProps {
 const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
   const [isOpen, setIsOpen] = useState(false);
 
-  const isQualified = result.status === 'QUALIFIED' || result.status === 'QUALIFIED_TURBO';
+  const isQualified = result.status === 'QUALIFIED';
+  const isSpeedup = result.status === 'QUALIFIED_SPEEDUP';
   const isRejected = result.status === 'AI_REJECTED';
   const isFiltered = result.status === 'FILTERED_OUT';
-  const isTurbo = result.status === 'QUALIFIED_TURBO';
   const ai = result.aiAnalysis;
 
   // Determine status color/icon
@@ -23,18 +23,28 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
   let statusBg = 'bg-white';
   let statusBorder = 'border-slate-200';
   let Icon = AlertTriangle;
+  let statusLabel = "REJECTED";
 
-  if (isQualified || isTurbo) {
+  if (isQualified) {
     statusColor = 'text-green-600';
     statusBg = 'bg-white';
     statusBorder = 'border-green-200';
     Icon = Check;
+    statusLabel = "SAVED (AI Verified)";
+  } else if (isSpeedup) {
+    statusColor = 'text-purple-600';
+    statusBg = 'bg-purple-50/20';
+    statusBorder = 'border-purple-200';
+    Icon = FastForward;
+    statusLabel = "SAVED (Speedup)";
   } else if (isRejected) {
     statusColor = 'text-blue-600';
     Icon = AlertTriangle;
+    statusLabel = "AI REJECTED";
   } else if (isFiltered) {
     statusColor = 'text-slate-400';
     Icon = X;
+    statusLabel = "FILTERED";
   }
 
   // Helper to split comma separated strings into plain text lists
@@ -91,15 +101,19 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
         </button>
         
         {/* Status Icon Box */}
-        <div className={clsx("flex items-center justify-center w-5 h-5 rounded text-white font-bold flex-shrink-0", isQualified ? "bg-green-500" : (isRejected ? "bg-blue-500" : "bg-slate-300"))}>
+        <div className={clsx("flex items-center justify-center w-5 h-5 rounded text-white font-bold flex-shrink-0", 
+            isQualified ? "bg-green-500" : (isSpeedup ? "bg-purple-500" : (isRejected ? "bg-blue-500" : "bg-slate-300"))
+        )}>
             <Icon size={12} strokeWidth={4} />
         </div>
 
         {/* Title */}
         <div className="flex-1 truncate flex items-center gap-2 min-w-0">
-            <span className={clsx("font-bold flex-shrink-0", isQualified ? "text-green-700" : "text-blue-700")}>
-                [Score: {ai?.score ?? 0}/10]
-            </span>
+            {!isSpeedup && !isFiltered && (
+                <span className={clsx("font-bold flex-shrink-0", isQualified ? "text-green-700" : "text-blue-700")}>
+                    [Score: {ai?.score ?? 0}/10]
+                </span>
+            )}
             <span className="text-slate-700 truncate font-sans font-medium" title={paper.title}>{paper.title}</span>
         </div>
         
@@ -113,29 +127,29 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                 <span className="text-[8px] uppercase font-bold text-slate-400">Comp</span>
                 <span>{formatStat(result.compositeScore, result.compositeMin)}</span>
             </div>
-            {ai && (
+            {ai && !isSpeedup && (
                 <div className={clsx("flex flex-col items-end leading-none", (ai.probability || 0) >= (result.probabilityMin || 0) ? "text-green-600" : "text-orange-400")}>
                     <span className="text-[8px] uppercase font-bold text-slate-400">Prob</span>
                     <span>{formatProb(ai.probability, result.probabilityMin)}</span>
                 </div>
             )}
             
-            {/* NEW TURBO COLUMN */}
+            {/* NEW SPEEDUP COLUMN */}
             <div className={clsx("flex flex-col items-end leading-none pl-2 border-l border-slate-200", 
-                 result.turboStatistics?.active ? "text-purple-600" : "text-slate-400"
+                 result.speedupStatistics?.active ? "text-purple-600" : "text-slate-400"
             )}>
-                <span className="text-[8px] uppercase font-bold text-slate-400">Turbo</span>
+                <span className="text-[8px] uppercase font-bold text-slate-400">Speedup</span>
                 <span>
-                    {result.turboStatistics 
-                        ? `${result.turboStatistics.qualified}/${result.turboStatistics.processed} (${(result.turboStatistics.yield * 100).toFixed(0)}%)`
+                    {result.speedupStatistics 
+                        ? `${result.speedupStatistics.qualified}/${result.speedupStatistics.processed} (${(result.speedupStatistics.yield * 100).toFixed(0)}%)`
                         : '-'}
                 </span>
             </div>
         </div>
 
         {/* Saved Tag */}
-        <div className="text-slate-400 font-bold ml-2 flex-shrink-0">
-            {isQualified ? "SAVED" : isFiltered ? "FILTERED" : "REJECTED"}
+        <div className="text-slate-400 font-bold ml-2 flex-shrink-0 uppercase text-[9px]">
+            {statusLabel}
         </div>
       </div>
 
@@ -169,7 +183,11 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                     {/* Right: AI */}
                     <div className="bg-blue-50/30 p-3 rounded border border-blue-100">
                         <h4 className="text-[10px] text-slate-400 uppercase font-bold mb-1">AI Abstract / Summary</h4>
-                        {ai ? (
+                        {isSpeedup ? (
+                             <div className="text-xs text-purple-700 italic flex items-center gap-2">
+                                <FastForward size={14} /> AI Analysis Skipped (Smart Speedup Active)
+                             </div>
+                        ) : ai ? (
                             <div className="text-xs text-blue-900">
                                 {renderSummary(ai.summary)}
                             </div>
@@ -183,6 +201,7 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
             </section>
 
             {/* 3. CATEGORIZATION */}
+            {!isSpeedup && !isFiltered && (
             <section>
                 <h3 className="text-sm font-bold text-slate-900 border-b border-slate-200 pb-1 mb-2">3. Categorization</h3>
                 <div className="flex items-start gap-2 text-xs">
@@ -200,8 +219,10 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                     </div>
                 </div>
             </section>
+            )}
 
             {/* 4. SUBSTANCES & PLANTS */}
+            {!isSpeedup && !isFiltered && (
             <section>
                  <h3 className="text-sm font-bold text-slate-900 border-b border-slate-200 pb-1 mb-2">4. Substances & Plants</h3>
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
@@ -225,6 +246,7 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                     </div>
                  </div>
             </section>
+            )}
 
             {/* TUNING & DEBUG */}
             <section className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4">
@@ -262,16 +284,16 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, result }) => {
                             <span className="font-bold text-slate-600">Composite Score:</span>
                             <span className="font-mono">{result.compositeScore?.toFixed(4) ?? '0.0000'}</span>
                         </div>
-                        {ai && (
+                        {ai && !isSpeedup && (
                             <div className="flex justify-between border-b border-slate-200 pb-1">
                                 <span className="font-bold text-slate-600">Discovery Probability:</span>
                                 <span className="font-mono">{ai.probability ?? 0}/10</span>
                             </div>
                         )}
-                        {result.turboStatistics && (
+                        {result.speedupStatistics && (
                             <div className="flex justify-between border-b border-slate-200 pb-1 text-purple-600">
-                                <span className="font-bold">Turbo Yield:</span>
-                                <span className="font-mono">{result.turboStatistics.qualified}/{result.turboStatistics.processed} ({(result.turboStatistics.yield * 100).toFixed(0)}%)</span>
+                                <span className="font-bold">Speedup Yield:</span>
+                                <span className="font-mono">{result.speedupStatistics.qualified}/{result.speedupStatistics.processed} ({(result.speedupStatistics.yield * 100).toFixed(0)}%)</span>
                             </div>
                         )}
                     </div>

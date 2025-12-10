@@ -1,14 +1,14 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { CycleHeaderData } from '../types';
-import { RefreshCw, Rocket, Settings, ListFilter, Gauge } from 'lucide-react';
+import { RefreshCw, Rocket, Settings, ListFilter, Gauge, Database } from 'lucide-react';
 
 interface CycleHeaderProps {
   header: CycleHeaderData;
 }
 
 const CycleHeader: React.FC<CycleHeaderProps> = ({ header }) => {
-  const { query, timestamp, configSnapshot } = header;
+  const { query, timestamp, configSnapshot, totalRecords } = header;
 
   const StatItem = ({ label, value, sub }: { label: string; value: string | number | boolean; sub?: string }) => (
     <div className="flex flex-col min-w-[80px]">
@@ -72,12 +72,12 @@ const CycleHeader: React.FC<CycleHeaderProps> = ({ header }) => {
                 <div className="space-y-3">
                      <div className="flex items-center gap-1.5 text-slate-400 mb-1 border-b border-slate-200 pb-1">
                         <Gauge size={10} />
-                        <span className="text-[9px] font-bold uppercase">Turbo / FailFast</span>
+                        <span className="text-[9px] font-bold uppercase">Speedup / FailFast</span>
                      </div>
                      <StatItem label="Fail Fast" value={configSnapshot.failFast} />
-                     <StatItem label="Speed Up" value={configSnapshot.speedUp} />
+                     <StatItem label="Smart Speedup" value={configSnapshot.speedUp} />
                      <StatItem label="Qualify Rate" value={`${(configSnapshot.qualifyRate * 100).toFixed(0)}%`} />
-                     <StatItem label="Sample Size" value={configSnapshot.turboThreshold} sub="papers" />
+                     <StatItem label="Sample Size" value={configSnapshot.speedupSampleCount} sub="papers" />
                 </div>
 
                 {/* Column 3: Source Config */}
@@ -88,7 +88,11 @@ const CycleHeader: React.FC<CycleHeaderProps> = ({ header }) => {
                      </div>
                      <StatItem label="Source" value={configSnapshot.source} />
                      <StatItem label="Range" value={`${configSnapshot.startRec} - ${configSnapshot.stopRec}`} />
-                     <StatItem label="Collection" value={configSnapshot.collection} />
+                     {totalRecords !== undefined ? (
+                         <StatItem label="DB Total" value={totalRecords.toLocaleString()} sub="records" />
+                     ) : (
+                         <StatItem label="Collection" value={configSnapshot.collection} />
+                     )}
                      <StatItem label="Mode" value={configSnapshot.mode} />
                 </div>
 

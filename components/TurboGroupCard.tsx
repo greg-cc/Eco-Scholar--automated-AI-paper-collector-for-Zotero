@@ -33,7 +33,7 @@ const TurboGroupCard: React.FC<TurboGroupCardProps> = ({ data }) => {
 
         <div className="flex-1">
             <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-purple-900">Turbo Batch Download</h3>
+                <h3 className="text-sm font-bold text-purple-900">Speedup Batch Download</h3>
                 <span className="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold shadow-sm">
                     {count} PAPERS
                 </span>

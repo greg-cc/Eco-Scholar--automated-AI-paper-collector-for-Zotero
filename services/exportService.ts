@@ -1,3 +1,4 @@
+
 import { Paper, ProcessingResult } from "../types";
 
 /**
@@ -6,7 +7,7 @@ import { Paper, ProcessingResult } from "../types";
  */
 export function generateRIS(results: { paper: Paper; result: ProcessingResult }[]): string {
   const qualifiedItems = results.filter(
-    r => r.result.status === 'QUALIFIED' || r.result.status === 'QUALIFIED_TURBO'
+    r => r.result.status === 'QUALIFIED' || r.result.status === 'QUALIFIED_SPEEDUP'
   );
 
   if (qualifiedItems.length === 0) return "";

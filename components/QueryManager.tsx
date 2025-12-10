@@ -8,7 +8,7 @@ interface QueryManagerProps {
   queue: QueueItem[];
   onUpdateQueue: (queue: QueueItem[]) => void;
   config: AppConfig;
-  onRun: () => void;
+  onRun: (mode: 'single' | 'cycle') => void;
   isProcessing: boolean;
 }
 
@@ -561,7 +561,7 @@ const QueryManager: React.FC<QueryManagerProps> = ({ queue, onUpdateQueue, confi
 
             <div className="flex-1"></div>
             <button 
-                onClick={onRun} 
+                onClick={() => onRun(queryMode)} 
                 disabled={isProcessing || queue.length === 0}
                 className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded shadow-sm font-bold text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >

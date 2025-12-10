@@ -10,7 +10,7 @@ interface QueueModalProps {
   queue: QueueItem[];
   onUpdateQueue: (queue: QueueItem[]) => void;
   isProcessing: boolean;
-  onRun: () => void;
+  onRun: (mode: 'single' | 'cycle') => void;
   onCancel: () => void;
   config: AppConfig;
 }
@@ -98,7 +98,7 @@ const QueueModal: React.FC<QueueModalProps> = ({
                 </button>
             ) : (
                 <button 
-                    onClick={onRun}
+                    onClick={() => onRun('cycle')}
                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg shadow-sm transition-all"
                 >
                     <PlayCircle size={16} /> Run Queue
@@ -159,7 +159,7 @@ const QueueModal: React.FC<QueueModalProps> = ({
                             {item.status === 'NEEDS_ADJUSTMENT' ? (
                                 <span className="text-orange-600 font-bold">Fail Fast Triggered</span>
                             ) : (
-                                <span>{config.turboThresholdCount} samples</span>
+                                <span>{config.speedupSampleCount} samples</span>
                             )}
                         </td>
                         <td className="p-3 text-center">
@@ -180,7 +180,7 @@ const QueueModal: React.FC<QueueModalProps> = ({
         {/* Footer */}
         <div className="p-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 flex justify-between">
             <span>Total Queries: {queue.length}</span>
-            <span>Queries marked "Needs Adjustment" failed the Turbo Qualification Threshold ({config.turboQualifyRate * 100}%)</span>
+            <span>Queries marked "Needs Adjustment" failed the Smart Speedup Qualification Threshold ({config.speedupQualifyRate * 100}%)</span>
         </div>
       </div>
     </div>

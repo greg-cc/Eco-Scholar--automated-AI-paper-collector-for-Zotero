@@ -346,7 +346,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
       <hr className="border-slate-200" />
 
       {/* ... Zotero & Rest ... */}
-      {/* (Rest of component remains largely the same, included for context completeness) */}
       <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 animate-fadeIn">
          <div className="flex justify-between items-start mb-3">
              <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-2">
@@ -440,7 +439,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
              <div className="flex items-center justify-between">
                  <div className="flex items-center gap-2">
                     <div className="text-sm text-slate-600">
-                        <span className="font-medium">Turbo Mode:</span> Auto-skips AI if <span className="font-mono text-purple-600">{(localConfig.turboQualifyRate * 100).toFixed(0)}%</span> of first papers qualify.
+                        <span className="font-medium">Smart Speedup:</span> Auto-skips AI if <span className="font-mono text-purple-600">{(localConfig.speedupQualifyRate * 100).toFixed(0)}%</span> of first papers qualify.
                     </div>
                  </div>
 
@@ -459,16 +458,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
                  </div>
              </div>
 
-             {/* Turbo Qualify Rate Slider */}
+             {/* Speedup Qualify Rate Slider */}
              <div>
                 <div className="flex justify-between mb-1">
-                    <label className="text-xs font-medium text-slate-500">Qualify Rate (Confidence Threshold)</label>
-                    <span className="text-xs font-mono text-purple-600 font-bold">{(localConfig.turboQualifyRate * 100).toFixed(0)}%</span>
+                    <label className="text-xs font-medium text-slate-500">Speedup Qualify Rate (Confidence Threshold)</label>
+                    <span className="text-xs font-mono text-purple-600 font-bold">{(localConfig.speedupQualifyRate * 100).toFixed(0)}%</span>
                 </div>
                 <input 
                     type="range" step="0.05" min="0" max="1"
-                    value={localConfig.turboQualifyRate}
-                    onChange={(e) => setLocalConfig({...localConfig, turboQualifyRate: parseFloat(e.target.value)})}
+                    value={localConfig.speedupQualifyRate}
+                    onChange={(e) => setLocalConfig({...localConfig, speedupQualifyRate: parseFloat(e.target.value)})}
                     className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
                 />
             </div>
@@ -477,12 +476,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
              <div>
                 <div className="flex justify-between mb-1">
                     <label className="text-xs font-medium text-slate-500">Sample Size (First N Papers)</label>
-                    <span className="text-xs font-mono text-slate-600">{localConfig.turboThresholdCount}</span>
+                    <span className="text-xs font-mono text-slate-600">{localConfig.speedupSampleCount}</span>
                 </div>
                 <input 
                     type="range" step="1" min="5" max="50"
-                    value={localConfig.turboThresholdCount}
-                    onChange={(e) => setLocalConfig({...localConfig, turboThresholdCount: parseInt(e.target.value)})}
+                    value={localConfig.speedupSampleCount}
+                    onChange={(e) => setLocalConfig({...localConfig, speedupSampleCount: parseInt(e.target.value)})}
                     className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-600"
                 />
             </div>
