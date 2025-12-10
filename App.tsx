@@ -197,15 +197,18 @@ const App: React.FC = () => {
   };
 
   const handleExport = async () => {
+    // Get ALL papers that are qualified or speedup-qualified from the current results
     const paperItems = results.flatMap(r => {
         if (r.type === 'PAPER') return [r.data];
         return [];
     }).filter(r => r.result.status === 'QUALIFIED' || r.result.status === 'QUALIFIED_SPEEDUP');
 
     if (paperItems.length === 0) {
-        alert("No qualified papers to export.");
+        alert("No qualified papers found in the current report to export.");
         return;
     }
+    
+    // Explicitly upload/export these items
     await runSpeedupJobExport(paperItems);
   };
 
@@ -285,15 +288,16 @@ const App: React.FC = () => {
            if (passedVector || passedComposite) {
                cycleRef.current.processedCount++;
                
-               // Check if we are ALREADY in Speedup Mode
+               // --- CRITICAL LOGIC FIX ---
+               // 1. Check if Smart Speedup is ALREADY active (Persistence check)
                if (hasTriggeredSmartModeRef.current) {
                    status = 'QUALIFIED_SPEEDUP';
                    skippedAi = true;
                    cycleRef.current.qualifiedCount++;
                } else {
-                   // We are in Analysis Mode (Sampling)
+                   // 2. Not yet in speedup - perform standard checks
                    
-                   // 1. FAIL FAST CHECK
+                   // Fail Fast Check
                    if (config.failFast && 
                        cycleRef.current.processedCount >= config.speedupSampleCount && 
                        cycleRef.current.qualifiedCount === 0) {
@@ -313,7 +317,7 @@ const App: React.FC = () => {
                        
                        const analysisPaper = { ...paper, abstract: contextAbstract };
                        
-                       // --- ROBUST AI PROCESSING LOOP WITH MANUAL CONTROLS ---
+                       // --- ROBUST AI PROCESSING LOOP ---
                        let analysisDone = false;
                        while (!analysisDone && !signal.aborted) {
                             setProcessingState({ id: paper.id, title: paper.title });
@@ -323,17 +327,14 @@ const App: React.FC = () => {
                                 .then(res => ({ type: 'SUCCESS', data: res }))
                                 .catch(err => ({ type: 'ERROR', err }));
                             
-                            // 3m Timeout (180s)
                             const timeoutPromise = new Promise<{type: 'TIMEOUT'}>((resolve) => {
                                 setTimeout(() => resolve({ type: 'TIMEOUT' }), 180000);
                             });
 
-                            // User Manual Action
                             const userPromise = new Promise<{type: 'RETRY' | 'SKIP'}>((resolve) => {
                                 userActionResolverRef.current = (action) => resolve({ type: action });
                             });
 
-                            // RACE
                             const result: any = await Promise.race([aiPromise, timeoutPromise, userPromise]);
 
                             if (result.type === 'SUCCESS') {
@@ -354,12 +355,11 @@ const App: React.FC = () => {
                                 analysisDone = true;
                             } else if (result.type === 'RETRY') {
                                 aiAbort.abort();
-                                console.log("Retrying current record...");
                                 await new Promise(r => setTimeout(r, 500));
                             }
                        }
                        setProcessingState(null);
-                       // -----------------------------------------------------
+                       // ------------------------------------
 
                        if (aiAnalysis && aiAnalysis.qualified) {
                            status = 'QUALIFIED';
@@ -368,13 +368,12 @@ const App: React.FC = () => {
                            status = 'AI_REJECTED';
                        }
 
-                       // 2. CHECK FOR SPEEDUP TRIGGER (Post-Analysis)
-                       // Check if we have met the sample size requirement to evaluate yield
-                       if (!hasTriggeredSmartModeRef.current && cycleRef.current.processedCount >= config.speedupSampleCount) {
+                       // 3. Check for Speedup Trigger (Post-Analysis)
+                       if (cycleRef.current.processedCount >= config.speedupSampleCount) {
                             const currentYield = cycleRef.current.qualifiedCount / cycleRef.current.processedCount;
                             
                             if (currentYield >= config.speedupQualifyRate) {
-                                hasTriggeredSmartModeRef.current = true;
+                                hasTriggeredSmartModeRef.current = true; // LOCK ON
                                 setResults(prev => [...prev, { 
                                     type: 'HARVEST_HEADER', 
                                     data: { 
@@ -654,7 +653,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3">
              <button onClick={() => setUseWebScraping(!useWebScraping)} className={clsx("flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold", useWebScraping ? "bg-purple-100 border-purple-300 text-purple-700" : "bg-slate-50 border-slate-200 text-slate-400")}>{useWebScraping ? <ToggleRight size={16} /> : <ToggleLeft size={16} />} Deep Scraping</button>
              <button onClick={() => setUploadToZotero(!uploadToZotero)} className={clsx("flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold", uploadToZotero ? "bg-red-100 border-red-300 text-red-700" : "bg-blue-100 border-blue-300 text-blue-700")}>{uploadToZotero ? <Library size={14} /> : <FileText size={14} />} {uploadToZotero ? "Mode: Zotero" : "Mode: RIS File"}</button>
-             <button onClick={handleExport} disabled={results.length === 0 || isProcessing || isUploading} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md disabled:opacity-50"><CloudUpload size={14} /> Export</button>
+             <button onClick={handleExport} disabled={results.length === 0 || isProcessing || isUploading} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md disabled:opacity-50"><CloudUpload size={14} /> EXPORT</button>
              <div className="h-6 w-px bg-slate-300 mx-2"></div>
              <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-lg", showSettings ? "bg-slate-200 text-slate-800" : "hover:bg-slate-100 text-slate-500")}><Settings2 size={20} /></button>
         </div>

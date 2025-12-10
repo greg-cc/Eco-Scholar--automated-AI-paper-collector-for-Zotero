@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AppConfig, SemanticSentence, NetworkLog } from '../types';
 import { GEMINI_MODELS } from '../constants';
-import { Save, RefreshCw, Cpu, Globe, Trash2, Plus, Upload, Zap, FastForward, BookOpen, FileText, Loader2, CheckCircle, XCircle, Server, Ban } from 'lucide-react';
+import { Save, RefreshCw, Cpu, Globe, Trash2, Plus, Upload, Zap, FastForward, BookOpen, FileText, Loader2, CheckCircle, XCircle, Server, Ban, Download, FileSpreadsheet } from 'lucide-react';
 import { OllamaService } from '../services/ollamaService';
 import { clsx } from 'clsx';
 
@@ -38,8 +38,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
   const [testStatus, setTestStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
   
-  // Ref for canceling test
+  // Refs
   const testAbortController = useRef<AbortController | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Load presets on mount
   useEffect(() => {
@@ -92,9 +93,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
   }
 
   // Sentence Management
-  const handleSentenceToggle = (id: string) => {
+  const handleSentenceUpdate = (id: string, field: keyof SemanticSentence, value: any) => {
     const updated = localConfig.semanticSentences.map(s => 
-        s.id === id ? { ...s, enabled: !s.enabled } : s
+        s.id === id ? { ...s, [field]: value } : s
     );
     setLocalConfig({ ...localConfig, semanticSentences: updated });
   };
@@ -121,6 +122,99 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
       });
       setNewSentenceText('');
       setNewSentenceTag('');
+  };
+
+  const handleExportRules = () => {
+      const headers = ["Text", "Tag", "Type", "Enabled"];
+      const rows = localConfig.semanticSentences.map(s => {
+          const text = s.text.replace(/"/g, '""');
+          return `"${text}",${s.customTag},${s.positive ? 'Positive' : 'Negative'},${s.enabled}`;
+      });
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `semantic_rules_${Date.now()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  const handleImportClick = () => {
+      importInputRef.current?.click();
+  };
+
+  const handleImportRules = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+          const content = evt.target?.result as string;
+          if (!content) return;
+          
+          const lines = content.split('\n');
+          const newRules: SemanticSentence[] = [];
+          
+          // Heuristic to skip header if "Text" is in first line
+          const startIdx = lines[0].toLowerCase().includes('text') ? 1 : 0;
+          
+          for (let i = startIdx; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (!line) continue;
+              
+              // CSV Parse logic (handles quotes)
+              // Matches quoted strings OR non-comma sequences
+              const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+              
+              let parts: string[] = [];
+              if (!line.includes('"')) {
+                  parts = line.split(',');
+              } else {
+                  // Manual parse for robustness with quotes
+                  let current = '';
+                  let inQuotes = false;
+                  for (let j = 0; j < line.length; j++) {
+                      const char = line[j];
+                      if (char === '"' && (j === 0 || line[j-1] !== '\\')) {
+                           inQuotes = !inQuotes;
+                      } else if (char === ',' && !inQuotes) {
+                           parts.push(current);
+                           current = '';
+                      } else {
+                           current += char;
+                      }
+                  }
+                  parts.push(current);
+              }
+
+              const cleanParts = parts.map(p => p.trim().replace(/^"|"$/g, '').replace(/""/g, '"'));
+              
+              // Expecting: Text, Tag, Type, Enabled
+              if (cleanParts.length >= 2) {
+                  newRules.push({
+                      id: `rule-${Date.now()}-${i}`,
+                      text: cleanParts[0],
+                      customTag: cleanParts[1] || 'Imported',
+                      positive: (cleanParts[2]?.toLowerCase() || 'positive') !== 'negative',
+                      enabled: (cleanParts[3]?.toLowerCase() || 'true') !== 'false'
+                  });
+              }
+          }
+          
+          if (newRules.length > 0) {
+              if (confirm(`Imported ${newRules.length} rules.\n\nClick OK to REPLACE existing rules.\nClick CANCEL to APPEND to existing rules.`)) {
+                   setLocalConfig({...localConfig, semanticSentences: newRules});
+              } else {
+                   setLocalConfig({...localConfig, semanticSentences: [...localConfig.semanticSentences, ...newRules]});
+              }
+          } else {
+              alert("No valid rules found in file.");
+          }
+      };
+      reader.readAsText(file);
+      if (importInputRef.current) importInputRef.current.value = '';
   };
 
   const handleGradingTopicsChange = (val: string) => {
@@ -554,37 +648,100 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onUpdate, onLog }
 
       {/* --- SENTENCE MANAGEMENT --- */}
       <div>
-        <label className="block text-sm font-semibold text-slate-700 mb-3 uppercase tracking-wide">Semantic Vector Rules</label>
+        <div className="flex justify-between items-center mb-3">
+             <label className="block text-sm font-semibold text-slate-700 uppercase tracking-wide">Semantic Vector Rules</label>
+             <div className="flex gap-2">
+                 <button 
+                    onClick={handleExportRules}
+                    className="flex items-center gap-1 px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-600 hover:bg-slate-50 font-medium"
+                    title="Download Rules CSV"
+                 >
+                    <Download size={14} /> Export CSV
+                 </button>
+                 <input 
+                    type="file" 
+                    ref={importInputRef}
+                    onChange={handleImportRules}
+                    className="hidden" 
+                    accept=".csv"
+                 />
+                 <button 
+                    onClick={handleImportClick}
+                    className="flex items-center gap-1 px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-600 hover:bg-slate-50 font-medium"
+                    title="Import Rules CSV"
+                 >
+                    <FileSpreadsheet size={14} /> Import CSV
+                 </button>
+             </div>
+        </div>
         
         {/* Existing Sentences List */}
-        <div className="space-y-3 mb-6 max-h-80 overflow-y-auto pr-2">
+        <div className="space-y-3 mb-6 max-h-[500px] overflow-y-auto pr-2">
             {localConfig.semanticSentences.map(s => (
-                <div key={s.id} className="group relative flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 shadow-sm hover:border-blue-200 transition-colors">
-                    <input 
-                        type="checkbox" 
-                        checked={s.enabled} 
-                        onChange={() => handleSentenceToggle(s.id)}
-                        className="mt-1.5"
-                    />
-                    <div className="flex-1">
-                        <p className={`text-sm text-slate-800 ${!s.enabled && 'opacity-50 line-through'}`}>{s.text}</p>
-                        <div className="flex gap-2 mt-1">
-                            <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${s.positive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                {s.positive ? 'Positive' : 'Negative'}
-                            </span>
-                            <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">
-                                {s.customTag}
-                            </span>
+                <div key={s.id} className="flex items-start gap-3 p-3 bg-white rounded-lg border border-slate-200 shadow-sm transition-colors hover:border-blue-300">
+                    <div className="pt-2">
+                        <input 
+                            type="checkbox" 
+                            checked={s.enabled} 
+                            onChange={(e) => handleSentenceUpdate(s.id, 'enabled', e.target.checked)}
+                            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                    </div>
+                    
+                    <div className="flex-1 space-y-2">
+                        {/* Sentence Text Area */}
+                        <textarea 
+                            value={s.text}
+                            onChange={(e) => handleSentenceUpdate(s.id, 'text', e.target.value)}
+                            className={clsx(
+                                "w-full p-2 text-sm border rounded focus:ring-1 focus:ring-blue-500 outline-none resize-none font-medium",
+                                !s.enabled ? "text-slate-400 bg-slate-50 border-slate-200" : "text-slate-800 border-slate-300"
+                            )}
+                            rows={2}
+                        />
+                        
+                        {/* Metadata Row */}
+                        <div className="flex gap-2 items-center">
+                            {/* Tag Input */}
+                            <div className="flex items-center bg-slate-100 rounded border border-slate-200 px-2 py-1 flex-1 max-w-[200px]">
+                                <span className="text-[10px] text-slate-500 mr-2 uppercase font-bold">Tag:</span>
+                                <input 
+                                    type="text" 
+                                    value={s.customTag}
+                                    onChange={(e) => handleSentenceUpdate(s.id, 'customTag', e.target.value)}
+                                    className="bg-transparent border-none text-xs font-bold text-slate-700 focus:ring-0 p-0 w-full"
+                                />
+                            </div>
+
+                            {/* Type Select */}
+                            <select 
+                                value={s.positive ? 'positive' : 'negative'}
+                                onChange={(e) => handleSentenceUpdate(s.id, 'positive', e.target.value === 'positive')}
+                                className={clsx(
+                                    "text-[10px] font-bold uppercase px-2 py-1 rounded border outline-none cursor-pointer appearance-none text-center min-w-[80px]",
+                                    s.positive ? "bg-green-100 text-green-700 border-green-200" : "bg-red-100 text-red-700 border-red-200"
+                                )}
+                            >
+                                <option value="positive">Positive</option>
+                                <option value="negative">Negative</option>
+                            </select>
                         </div>
                     </div>
+
                     <button 
                         onClick={() => handleDeleteSentence(s.id)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all absolute top-2 right-2"
+                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-all mt-1"
+                        title="Delete Rule"
                     >
                         <Trash2 size={16} />
                     </button>
                 </div>
             ))}
+            {localConfig.semanticSentences.length === 0 && (
+                <div className="text-center p-8 text-slate-400 italic bg-slate-50 rounded border border-dashed border-slate-300">
+                    No semantic rules defined. Add one below or import from CSV.
+                </div>
+            )}
         </div>
 
         {/* Add New Sentence */}
