@@ -19,7 +19,7 @@ import QueuePanel from './components/QueuePanel';
 import QueueModal from './components/QueueModal';
 import QueryManager from './components/QueryManager';
 import NetworkSidebar from './components/NetworkSidebar';
-import { Settings2, CloudUpload, XCircle, Activity, Database, ToggleLeft, ToggleRight, Search, Globe, Library, FileText, AlertOctagon } from 'lucide-react';
+import { Settings2, CloudUpload, XCircle, Activity, Database, ToggleLeft, ToggleRight, Search, Globe, Library, FileText, AlertOctagon, FastForward, RotateCcw, Play } from 'lucide-react';
 import { clsx } from 'clsx';
 
 type SearchMode = 'PUBMED' | 'SEMANTIC';
@@ -95,6 +95,10 @@ const App: React.FC = () => {
   // Network Logs
   const [networkLogs, setNetworkLogs] = useState<NetworkLog[]>([]);
 
+  // Processing State for Manual Controls
+  const [processingState, setProcessingState] = useState<{ id: string; title: string } | null>(null);
+  const userActionResolverRef = useRef<((action: 'RETRY' | 'SKIP') => void) | null>(null);
+
   const [stats, setStats] = useState<CycleStats>({
     totalScanned: 0,
     passedVector: 0,
@@ -133,6 +137,9 @@ const App: React.FC = () => {
         return [...prev, log].slice(-200);
     });
   }, []);
+
+  const onManualRetry = () => userActionResolverRef.current?.('RETRY');
+  const onManualSkip = () => userActionResolverRef.current?.('SKIP');
 
   useEffect(() => {
     aiServiceRef.current = null;
@@ -208,6 +215,7 @@ const App: React.FC = () => {
           abortControllerRef.current = null;
           setQueue(prev => prev.map(item => item.status === 'RUNNING' ? { ...item, status: 'CANCELLED' } : item));
           setIsProcessing(false);
+          setProcessingState(null); // Clear manual control UI
       }
   };
 
@@ -280,19 +288,14 @@ const App: React.FC = () => {
                // --- LOGIC START ---
                
                // 1. FAIL FAST CHECK
-               // If enabled, and we've processed enough samples, and found NOTHING qualified, stop.
                if (config.failFast && 
                    cycleRef.current.processedCount >= config.speedupSampleCount && 
                    cycleRef.current.qualifiedCount === 0) {
                    
                    cycleRef.current.failFastTriggered = true;
                    status = 'SKIPPED_FAIL_FAST';
-                   // Fall through to render this last failure, then the loop will exit at top next iter
                } else {
                    // 2. SPEEDUP ELIGIBILITY
-                   // Target: Based on User Config (Sample Size * Qualify Rate)
-                   // e.g. 10 * 0.1 = 1. We need 1 qualified paper to trigger.
-                   // e.g. 10 * 0.25 = 2.5 -> 3. We need 3 qualified papers.
                    const targetQualifiedCount = Math.max(1, Math.ceil(config.speedupSampleCount * config.speedupQualifyRate));
                    
                    const isFirstPaper = cycleRef.current.processedCount === 1;
@@ -327,9 +330,56 @@ const App: React.FC = () => {
                        }
                        
                        const analysisPaper = { ...paper, abstract: contextAbstract };
-                       aiAnalysis = await aiServiceRef.current!.analyzePaper(analysisPaper, config.gradingTopics, signal);
                        
-                       if (aiAnalysis.qualified) {
+                       // --- ROBUST AI PROCESSING LOOP WITH MANUAL CONTROLS ---
+                       let analysisDone = false;
+                       while (!analysisDone && !signal.aborted) {
+                            setProcessingState({ id: paper.id, title: paper.title });
+                            
+                            const aiAbort = new AbortController();
+                            const aiPromise = aiServiceRef.current!.analyzePaper(analysisPaper, config.gradingTopics, aiAbort.signal)
+                                .then(res => ({ type: 'SUCCESS', data: res }))
+                                .catch(err => ({ type: 'ERROR', err }));
+                            
+                            // 70s Timeout (1m 10s)
+                            const timeoutPromise = new Promise<{type: 'TIMEOUT'}>((resolve) => {
+                                setTimeout(() => resolve({ type: 'TIMEOUT' }), 70000);
+                            });
+
+                            // User Manual Action
+                            const userPromise = new Promise<{type: 'RETRY' | 'SKIP'}>((resolve) => {
+                                userActionResolverRef.current = (action) => resolve({ type: action });
+                            });
+
+                            // RACE
+                            const result: any = await Promise.race([aiPromise, timeoutPromise, userPromise]);
+
+                            if (result.type === 'SUCCESS') {
+                                aiAnalysis = result.data;
+                                analysisDone = true;
+                            } else if (result.type === 'ERROR') {
+                                console.warn("AI Error", result.err);
+                                aiAnalysis = { qualified: false, score: 0, summary: "Analysis Failed (Error)", tags: [], probability: 0 };
+                                analysisDone = true;
+                            } else if (result.type === 'TIMEOUT') {
+                                aiAbort.abort();
+                                console.warn("AI Timeout - Auto Skipping");
+                                aiAnalysis = { qualified: false, score: 0, summary: "Analysis Timed Out (Auto-skipped)", tags: [], probability: 0 };
+                                analysisDone = true;
+                            } else if (result.type === 'SKIP') {
+                                aiAbort.abort();
+                                aiAnalysis = { qualified: false, score: 0, summary: "Skipped by User", tags: [], probability: 0 };
+                                analysisDone = true;
+                            } else if (result.type === 'RETRY') {
+                                aiAbort.abort();
+                                console.log("Retrying current record...");
+                                await new Promise(r => setTimeout(r, 500));
+                            }
+                       }
+                       setProcessingState(null);
+                       // -----------------------------------------------------
+
+                       if (aiAnalysis && aiAnalysis.qualified) {
                            status = 'QUALIFIED';
                            cycleRef.current.qualifiedCount++;
                        } else {
@@ -579,6 +629,7 @@ const App: React.FC = () => {
           }
       } finally {
           setIsProcessing(false);
+          setProcessingState(null);
           abortControllerRef.current = null;
       }
   };
@@ -655,6 +706,35 @@ const App: React.FC = () => {
               <QueuePanel queue={queue} onUpdateQueue={setQueue} isProcessing={isProcessing} onRun={() => handleRunCycle('cycle')} onCancel={handleCancel} onExpand={() => setShowQueueModal(true)} config={config} />
           </div>
       </div>
+      
+      {/* MANUAL CONTROLS OVERLAY */}
+      {processingState && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 shadow-2xl z-50 animate-slideUp flex items-center justify-between gap-4 md:pl-[340px]">
+              <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="bg-blue-100 p-2 rounded-full text-blue-600 animate-spin"><Activity size={20} /></div>
+                  <div className="min-w-0">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Analysis in Progress</div>
+                      <div className="text-sm font-bold text-slate-800 truncate">{processingState.title}</div>
+                  </div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-[10px] text-slate-400 italic hidden sm:inline">Auto-skip in 70s...</span>
+                  <button 
+                    onClick={onManualRetry}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded border border-slate-200"
+                  >
+                      <RotateCcw size={14} /> Retry Record
+                  </button>
+                  <button 
+                    onClick={onManualSkip}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-100 hover:bg-orange-200 text-orange-700 font-bold text-xs rounded border border-orange-200"
+                  >
+                      <FastForward size={14} /> Skip / Abort
+                  </button>
+              </div>
+          </div>
+      )}
+
       <QueueModal isOpen={showQueueModal} onClose={() => setShowQueueModal(false)} queue={queue} onUpdateQueue={setQueue} isProcessing={isProcessing} onRun={() => { setShowQueueModal(false); handleRunCycle('cycle'); }} onCancel={handleCancel} config={config} />
     </div>
   );
