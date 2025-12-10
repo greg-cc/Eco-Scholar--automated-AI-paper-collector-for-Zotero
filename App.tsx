@@ -285,39 +285,21 @@ const App: React.FC = () => {
            if (passedVector || passedComposite) {
                cycleRef.current.processedCount++;
                
-               // --- LOGIC START ---
-               
-               // 1. FAIL FAST CHECK
-               if (config.failFast && 
-                   cycleRef.current.processedCount >= config.speedupSampleCount && 
-                   cycleRef.current.qualifiedCount === 0) {
-                   
-                   cycleRef.current.failFastTriggered = true;
-                   status = 'SKIPPED_FAIL_FAST';
+               // Check if we are ALREADY in Speedup Mode
+               if (hasTriggeredSmartModeRef.current) {
+                   status = 'QUALIFIED_SPEEDUP';
+                   skippedAi = true;
+                   cycleRef.current.qualifiedCount++;
                } else {
-                   // 2. SPEEDUP ELIGIBILITY
-                   const targetQualifiedCount = Math.max(1, Math.ceil(config.speedupSampleCount * config.speedupQualifyRate));
+                   // We are in Analysis Mode (Sampling)
                    
-                   const isFirstPaper = cycleRef.current.processedCount === 1;
-                   const isSpeedupEligible = !isFirstPaper && (cycleRef.current.qualifiedCount >= targetQualifiedCount);
-
-                   // VISUAL HEADER TRIGGER
-                   if (isSpeedupEligible && !hasTriggeredSmartModeRef.current) {
-                        setResults(prev => [...prev, { 
-                            type: 'HARVEST_HEADER', 
-                            data: { 
-                                id: `harvest-${Date.now()}`, 
-                                startRec: cycleRef.current.processedCount, 
-                                stopRec: currentItem.stopRec || 1000 
-                            } 
-                        }]);
-                        hasTriggeredSmartModeRef.current = true;
-                   }
-
-                   if (isSpeedupEligible) {
-                       status = 'QUALIFIED_SPEEDUP';
-                       skippedAi = true;
-                       cycleRef.current.qualifiedCount++;
+                   // 1. FAIL FAST CHECK
+                   if (config.failFast && 
+                       cycleRef.current.processedCount >= config.speedupSampleCount && 
+                       cycleRef.current.qualifiedCount === 0) {
+                       
+                       cycleRef.current.failFastTriggered = true;
+                       status = 'SKIPPED_FAIL_FAST';
                    } else {
                        // AI ANALYSIS
                        skippedAi = false;
@@ -341,9 +323,9 @@ const App: React.FC = () => {
                                 .then(res => ({ type: 'SUCCESS', data: res }))
                                 .catch(err => ({ type: 'ERROR', err }));
                             
-                            // 70s Timeout (1m 10s)
+                            // 3m Timeout (180s)
                             const timeoutPromise = new Promise<{type: 'TIMEOUT'}>((resolve) => {
-                                setTimeout(() => resolve({ type: 'TIMEOUT' }), 70000);
+                                setTimeout(() => resolve({ type: 'TIMEOUT' }), 180000);
                             });
 
                             // User Manual Action
@@ -384,6 +366,24 @@ const App: React.FC = () => {
                            cycleRef.current.qualifiedCount++;
                        } else {
                            status = 'AI_REJECTED';
+                       }
+
+                       // 2. CHECK FOR SPEEDUP TRIGGER (Post-Analysis)
+                       // Check if we have met the sample size requirement to evaluate yield
+                       if (!hasTriggeredSmartModeRef.current && cycleRef.current.processedCount >= config.speedupSampleCount) {
+                            const currentYield = cycleRef.current.qualifiedCount / cycleRef.current.processedCount;
+                            
+                            if (currentYield >= config.speedupQualifyRate) {
+                                hasTriggeredSmartModeRef.current = true;
+                                setResults(prev => [...prev, { 
+                                    type: 'HARVEST_HEADER', 
+                                    data: { 
+                                        id: `harvest-${Date.now()}`, 
+                                        startRec: cycleRef.current.processedCount, 
+                                        stopRec: currentItem.stopRec || 1000 
+                                    } 
+                                }]);
+                            }
                        }
                    }
                }
@@ -718,7 +718,7 @@ const App: React.FC = () => {
                   </div>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-[10px] text-slate-400 italic hidden sm:inline">Auto-skip in 70s...</span>
+                  <span className="text-[10px] text-slate-400 italic hidden sm:inline">Auto-skip in 3m...</span>
                   <button 
                     onClick={onManualRetry}
                     className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded border border-slate-200"
