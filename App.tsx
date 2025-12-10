@@ -19,6 +19,7 @@ import QueuePanel from './components/QueuePanel';
 import QueueModal from './components/QueueModal';
 import QueryManager from './components/QueryManager';
 import NetworkSidebar from './components/NetworkSidebar';
+import ExportReviewModal from './components/ExportReviewModal';
 import { Settings2, CloudUpload, XCircle, Activity, Database, ToggleLeft, ToggleRight, Search, Globe, Library, FileText, AlertOctagon, FastForward, RotateCcw, Play } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -53,6 +54,7 @@ const App: React.FC = () => {
   const [searchMode, setSearchMode] = useState<SearchMode>('PUBMED');
   const [useWebScraping, setUseWebScraping] = useState(false); 
   const [showQueueModal, setShowQueueModal] = useState(false); 
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const [queue, setQueue] = useState<QueueItem[]>(() => {
     const defaultQueries = [
@@ -154,63 +156,6 @@ const App: React.FC = () => {
         );
     }
   }, [config.provider, config.geminiApiKey, config.geminiModel, config.ollamaBaseUrl, config.ollamaModel, config.ollamaEmbeddingModel, handleNetworkLog]);
-
-  const runSpeedupJobExport = async (items: { paper: Paper; result: ProcessingResult }[]) => {
-    if (items.length === 0) return;
-
-    let useZotero = uploadToZotero;
-    if (useZotero) {
-        const missingKeys = !config.useLocalZotero && (!config.zoteroApiKey || !config.zoteroLibraryId);
-        if (missingKeys) {
-             const userWantsRis = confirm("Zotero Config Missing. Download RIS?");
-             if (userWantsRis) useZotero = false;
-             else return;
-        }
-    }
-
-    if (useZotero) {
-        setIsUploading(true);
-        const zotero = new ZoteroService({
-            apiKey: config.zoteroApiKey, 
-            libraryId: config.zoteroLibraryId,
-            useLocal: config.useLocalZotero,
-            ip: config.zoteroIp,
-            port: config.zoteroPort,
-            onLog: handleNetworkLog
-        });
-        
-        try {
-            const uploadRes = await zotero.uploadItems(items);
-            setZoteroResults(prev => [...(prev || []), ...uploadRes]);
-        } catch (e) {
-            console.error("Upload Error", e);
-            alert("Upload failed."); 
-        } finally {
-            setIsUploading(false);
-        }
-    } else {
-        const risContent = generateRIS(items);
-        if (risContent) {
-            downloadRIS(risContent, `cycle_export_${Date.now()}.ris`);
-        }
-    }
-  };
-
-  const handleExport = async () => {
-    // Get ALL papers that are qualified or speedup-qualified from the current results
-    const paperItems = results.flatMap(r => {
-        if (r.type === 'PAPER') return [r.data];
-        return [];
-    }).filter(r => r.result.status === 'QUALIFIED' || r.result.status === 'QUALIFIED_SPEEDUP');
-
-    if (paperItems.length === 0) {
-        alert("No qualified papers found in the current report to export.");
-        return;
-    }
-    
-    // Explicitly upload/export these items
-    await runSpeedupJobExport(paperItems);
-  };
 
   const handleCancel = () => {
       if (abortControllerRef.current) {
@@ -429,18 +374,16 @@ const App: React.FC = () => {
   };
 
   const handleRunCycle = async (mode: 'single' | 'cycle' = 'single') => {
+      // DEBUG LOG
+      console.log("Run Cycle Requested:", mode);
+
       if (!aiServiceRef.current) {
-          alert("Please configure AI Service first.");
+          alert("Please configure AI Service first (Gemini/Ollama).");
           setShowSettings(true);
           return;
       }
       
-      setIsProcessing(true);
-      setResults([]); 
-      abortControllerRef.current = new AbortController();
-      const signal = abortControllerRef.current.signal;
-
-      // Identify which items to run based on mode
+      // Identify target items first
       let targetIds: string[] = [];
       const currentQueue = queueRef.current;
       
@@ -448,21 +391,26 @@ const App: React.FC = () => {
           const first = currentQueue.find(q => q.status === 'READY' || q.status === 'NEEDS_ADJUSTMENT');
           if (first) targetIds = [first.id];
       } else {
-          // Cycle mode: Run all pending items
+          // Cycle mode
           targetIds = currentQueue
               .filter(q => q.status === 'READY' || q.status === 'NEEDS_ADJUSTMENT')
               .map(q => q.id);
       }
 
       if (targetIds.length === 0) {
-          alert("No pending queries found in queue.");
-          setIsProcessing(false);
+          alert(`No queries ready to run.\n\nQueue has ${currentQueue.length} items.\n(Items must be status READY or NEEDS_ADJUSTMENT)`);
           return;
       }
+
+      // Start processing UI
+      setIsProcessing(true);
+      setResults([]); 
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
       
       try {
-          // Pre-compute sentence vectors once for the whole cycle if they are global config
-          const validSentences = config.semanticSentences.filter(s => s.enabled);
+          // Pre-compute sentence vectors
+          const validSentences = (config.semanticSentences || []).filter(s => s.enabled);
           const validSentenceVectors = await Promise.all(
               validSentences.map(async (s) => ({
                   ...s,
@@ -475,7 +423,7 @@ const App: React.FC = () => {
           for (const itemId of targetIds) {
               if (signal.aborted) break;
 
-              // Find current index (it might have shifted if user edited, though processing locks editing)
+              // Refresh index each loop in case of weird state
               const qIdx = queueRef.current.findIndex(q => q.id === itemId);
               if (qIdx === -1) continue;
               
@@ -498,7 +446,7 @@ const App: React.FC = () => {
                     id: headerId,
                     query: item.query,
                     timestamp: Date.now(),
-                    totalRecords: 0, // Initial placeholder
+                    totalRecords: 0,
                     configSnapshot: {
                         vectorMin: item.vecMin ?? config.minVectorScore,
                         compMin: item.compMin ?? config.minCompositeScore,
@@ -539,7 +487,6 @@ const App: React.FC = () => {
                  if (searchMode === 'PUBMED') {
                      const { ids, total } = await getPubMedIds(item.query, currentStart, currentBatchSize, signal);
                      
-                     // Update header total if it's the first batch of the cycle
                      if (currentStart === START_REC && total > 0) {
                          setResults(prev => prev.map(r => 
                             r.type === 'HEADER' && r.data.id === headerId 
@@ -556,25 +503,10 @@ const App: React.FC = () => {
                          break; 
                      }
                      papers = await fetchPubMedPapers(ids, signal);
-                     if (papers.length === 0) {
-                         setResults(prev => [...prev, { 
-                             type: 'PAPER', 
-                             data: { 
-                                 paper: { id: `err-${currentStart}`, title: 'Batch Fetch Failed', abstract: `Failed to download details for IDs: ${ids.slice(0,3).join(', ')}...`, authors: [], year: 0, url: '', source: 'PubMed' },
-                                 result: { 
-                                     paperId: 'error', querySource: item.query, vectorScore: 0, compositeScore: 0, matches: [], 
-                                     passedVectorFilter: false, passedCompositeFilter: false, skippedAi: true, status: 'FILTERED_OUT' 
-                                } 
-                            } 
-                         }]);
-                         currentStart += BATCH_SIZE;
-                         continue;
-                     }
                  } else {
                      const { papers: semanticPapers, total } = await searchSemanticScholar(item.query, currentBatchSize, currentStart, signal);
                      papers = semanticPapers;
 
-                     // Update header total if it's the first batch of the cycle
                      if (currentStart === START_REC && total > 0) {
                          setResults(prev => prev.map(r => 
                             r.type === 'HEADER' && r.data.id === headerId 
@@ -590,6 +522,12 @@ const App: React.FC = () => {
                          }]);
                          break;
                      }
+                 }
+
+                 if (papers.length === 0) {
+                      // Skip batch if fetch failed but didn't throw
+                      currentStart += BATCH_SIZE;
+                      continue;
                  }
 
                  const shouldStop = await processPaperBatch(papers, queryVector, activeSentenceVectors, item, signal, pendingSpeedupExportRef.current);
@@ -624,7 +562,7 @@ const App: React.FC = () => {
       } catch (e: any) {
           if (e.name !== 'AbortError') {
               console.error("Cycle Error:", e);
-              alert(`Error: ${e.message}`);
+              alert(`Error running cycle: ${e.message}`);
           }
       } finally {
           setIsProcessing(false);
@@ -653,7 +591,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3">
              <button onClick={() => setUseWebScraping(!useWebScraping)} className={clsx("flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold", useWebScraping ? "bg-purple-100 border-purple-300 text-purple-700" : "bg-slate-50 border-slate-200 text-slate-400")}>{useWebScraping ? <ToggleRight size={16} /> : <ToggleLeft size={16} />} Deep Scraping</button>
              <button onClick={() => setUploadToZotero(!uploadToZotero)} className={clsx("flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold", uploadToZotero ? "bg-red-100 border-red-300 text-red-700" : "bg-blue-100 border-blue-300 text-blue-700")}>{uploadToZotero ? <Library size={14} /> : <FileText size={14} />} {uploadToZotero ? "Mode: Zotero" : "Mode: RIS File"}</button>
-             <button onClick={handleExport} disabled={results.length === 0 || isProcessing || isUploading} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md disabled:opacity-50"><CloudUpload size={14} /> EXPORT</button>
+             <button onClick={() => setShowExportModal(true)} disabled={results.length === 0 || isProcessing || isUploading} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md disabled:opacity-50"><CloudUpload size={14} /> EXPORT</button>
              <div className="h-6 w-px bg-slate-300 mx-2"></div>
              <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-lg", showSettings ? "bg-slate-200 text-slate-800" : "hover:bg-slate-100 text-slate-500")}><Settings2 size={20} /></button>
         </div>
@@ -735,6 +673,15 @@ const App: React.FC = () => {
       )}
 
       <QueueModal isOpen={showQueueModal} onClose={() => setShowQueueModal(false)} queue={queue} onUpdateQueue={setQueue} isProcessing={isProcessing} onRun={() => { setShowQueueModal(false); handleRunCycle('cycle'); }} onCancel={handleCancel} config={config} />
+      
+      {/* NEW EXPORT REVIEW MODAL */}
+      <ExportReviewModal 
+         isOpen={showExportModal} 
+         onClose={() => setShowExportModal(false)} 
+         results={results} 
+         config={config} 
+         onLog={handleNetworkLog}
+      />
     </div>
   );
 };

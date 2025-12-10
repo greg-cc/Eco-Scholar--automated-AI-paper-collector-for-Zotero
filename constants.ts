@@ -26,18 +26,18 @@ export const DEFAULT_GRADING_TOPICS = [
 ];
 
 export const DEFAULT_SEMANTIC_SENTENCES: SemanticSentence[] = [
-  { id: '1', text: "The paper is a research paper on killing infective agents of humans using phytochemicals.", enabled: true, positive: true, customTag: "phytochemicals" },
+  { id: '1', text: "The paper is a research paper on  phytochemicals, herbs, herbal oils, herbal extracts.", enabled: true, positive: true, customTag: "phytochemicals" },
   { id: '2', text: "The paper is primarily a review or meta-analysis", enabled: true, positive: false, customTag: "The-paper" },
   { id: '3', text: "The paper is primarily about the biology of an organism.", enabled: true, positive: false, customTag: "The-paper" },
   { id: '4', text: "The paper is primarily about the physical location of an organism", enabled: true, positive: false, customTag: "The-paper" },
-  { id: '5', text: "The content focuses on a medical study testing the efficacy of a compound to treat an aliment.", enabled: true, positive: true, customTag: "phytochemicals" },
+  { id: '5', text: "The content focuses on a herbal medical study testing the efficacy of a compound to treat an aliment.", enabled: true, positive: true, customTag: "phytochemicals" },
   { id: '6', text: "The content focuses on a study testing efficacy of phytochemicals against an organism.", enabled: true, positive: true, customTag: "phytochemicals" },
   { id: '7', text: "This content is related to things outside of health and medicine.", enabled: true, positive: false, customTag: "This-content" },
   { id: '8', text: "This content is an analysis of medical advise and medical guidelines for doctors.", enabled: true, positive: false, customTag: "This-content" },
   { id: '9', text: "This content analyzes the decision making process.", enabled: true, positive: false, customTag: "This-content" },
   { id: '10', text: "This content discussed the logic of medical diagnosis and unnecessary therapy.", enabled: true, positive: false, customTag: "This-content" },
   { id: '11', text: "This content is an analysis and overview for doctors.", enabled: true, positive: false, customTag: "This-content" },
-  { id: '12', text: "This paper details a research investigation seeking a cure.", enabled: true, positive: true, customTag: "phytochemicals" },
+  { id: '12', text: "This paper details a research investigation using herbal compounds or herbs.", enabled: true, positive: true, customTag: "phytochemicals" },
   { id: '13', text: "This content contains herbal or herbal compounds being tested for the medicinal value.", enabled: true, positive: true, customTag: "phytochemicals" },
   { id: '14', text: "This content does not contains herbal or herbal compounds being tested for the medicinal value.", enabled: true, positive: false, customTag: "This-content" },
   { id: '15', text: "This content does not explore the medicinal value of herbal or herbal compounds.", enabled: true, positive: false, customTag: "This-content" },

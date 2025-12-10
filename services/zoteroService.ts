@@ -18,9 +18,25 @@ export class ZoteroService {
         const ip = config.ip || '127.0.0.1';
         const port = config.port || '23119';
         this.baseUrl = `http://${ip}:${port}/users/${this.libraryId || '0'}`;
-        console.log(`[Zotero] Initialized in LOCAL mode: ${this.baseUrl}`);
+        this.logInfo('init', `Initialized in LOCAL mode: ${this.baseUrl}`);
     } else {
         this.baseUrl = `https://api.zotero.org/users/${this.libraryId}`;
+        this.logInfo('init', `Initialized in CLOUD mode: ${this.baseUrl}`);
+    }
+  }
+
+  private logInfo(action: string, details: string, body?: any) {
+    if (this.onLog) {
+        this.onLog({
+            id: `zot-info-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            timestamp: Date.now(),
+            source: 'Zotero',
+            type: 'req', // Use 'req' to show up as an outgoing event
+            method: 'INFO',
+            url: `[Internal]: ${action}`,
+            details: details,
+            requestBody: body ? JSON.stringify(body, null, 2) : undefined
+        });
     }
   }
 
@@ -112,6 +128,8 @@ export class ZoteroService {
           // Using exact phrase search if possible, or simple q search
           const url = `${this.baseUrl}/items?q=${encodedTitle}&itemType=journalArticle&limit=5`;
           
+          this.logInfo('check-dup', `Checking long title: "${cleanTitle.substring(0, 30)}..."`);
+
           const response = await this.monitoredFetch(url, { method: 'GET', headers: this.getHeaders() });
           if (!response.ok) return 'UNCERTAIN';
 
@@ -120,6 +138,7 @@ export class ZoteroService {
               const exactMatch = items.some((item: any) => 
                   item.data.title && item.data.title.toLowerCase() === cleanTitle.toLowerCase()
               );
+              this.logInfo('check-dup-result', exactMatch ? 'Exact Match Found (DUPLICATE)' : 'Similar Items Found but No Exact Match (NEW)');
               return exactMatch ? 'DUPLICATE' : 'NEW';
           }
           return 'NEW';
@@ -132,6 +151,8 @@ export class ZoteroService {
           const encodedAuthor = encodeURIComponent(firstAuthor);
           const url = `${this.baseUrl}/items?q=${encodedAuthor}&itemType=journalArticle&limit=10`;
 
+          this.logInfo('check-dup', `Short title fallback. Checking Author: "${firstAuthor}"`);
+
           const response = await this.monitoredFetch(url, { method: 'GET', headers: this.getHeaders() });
           if (!response.ok) return 'UNCERTAIN';
 
@@ -139,9 +160,6 @@ export class ZoteroService {
           if (!Array.isArray(items)) return 'UNCERTAIN';
 
           if (items.length === 0) {
-              // Author not found? Might be new, but with short title it's risky.
-              // Prompt says "check authors... otherwise... colorize pink"
-              // If we can't confirm via author, we mark as UNCERTAIN (Pink).
               return 'UNCERTAIN';
           }
           
@@ -150,11 +168,13 @@ export class ZoteroService {
               item.data.title && item.data.title.toLowerCase() === cleanTitle.toLowerCase()
           );
 
+          this.logInfo('check-dup-result', titleMatch ? 'Author Match + Title Match (DUPLICATE)' : 'Author Found, Title New (NEW)');
           return titleMatch ? 'DUPLICATE' : 'NEW';
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error checking Zotero duplicate:", error);
+      this.logInfo('check-dup-error', `Exception checking duplicates: ${error.message}`);
       return 'UNCERTAIN'; // Default to pink/popup on error
     }
   }
@@ -217,6 +237,7 @@ export class ZoteroService {
 
   async uploadItems(items: { paper: Paper; result: ProcessingResult }[]): Promise<ZoteroResult[]> {
     const results: ZoteroResult[] = [];
+    this.logInfo('batch-start', `Starting upload for ${items.length} items...`);
 
     for (const item of items) {
         // 1. Check Duplication Logic
@@ -236,6 +257,8 @@ export class ZoteroService {
 
         // Status is NEW -> Proceed to Upload
         const zoteroItem = this.formatItem(item.paper, item.result);
+        
+        this.logInfo('upload-prep', `Uploading: ${item.paper.title.substring(0,30)}...`, zoteroItem);
 
         try {
             const response = await this.monitoredFetch(`${this.baseUrl}/items`, {
@@ -248,12 +271,16 @@ export class ZoteroService {
                 results.push({ paperTitle: item.paper.title, status: 'UPLOADED' });
             } else {
                 const errText = await response.text();
+                this.logInfo('upload-fail', `Server rejected item`, { error: errText });
                 results.push({ paperTitle: item.paper.title, status: 'ERROR', details: errText });
             }
         } catch (e: any) {
+            this.logInfo('upload-fail', `Network exception`, { error: e.message });
             results.push({ paperTitle: item.paper.title, status: 'ERROR', details: e.message });
         }
     }
+    
+    this.logInfo('batch-complete', `Batch complete. Uploaded: ${results.filter(r => r.status === 'UPLOADED').length}, Duplicates: ${results.filter(r => r.status === 'DUPLICATE').length}, Errors: ${results.filter(r => r.status === 'ERROR').length}`);
 
     return results;
   }
