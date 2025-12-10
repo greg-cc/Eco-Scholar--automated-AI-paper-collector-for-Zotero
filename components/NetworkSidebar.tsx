@@ -32,6 +32,7 @@ const NetworkSidebar: React.FC<NetworkSidebarProps> = ({ logs, isProcessing, onC
     switch (method) {
       case 'GET': return 'text-blue-400';
       case 'POST': return 'text-green-400';
+      case 'INFO': return 'text-purple-400';
       default: return 'text-slate-400';
     }
   };
@@ -132,7 +133,7 @@ const NetworkSidebar: React.FC<NetworkSidebarProps> = ({ logs, isProcessing, onC
                  {isOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                  {`${timeStr}.${msStr}`}
                </span>
-               <span className={clsx("font-bold uppercase px-1 rounded text-[9px]", log.source === 'Ollama' ? "bg-orange-900/30 text-orange-400" : "bg-red-900/30 text-red-400")}>
+               <span className={clsx("font-bold uppercase px-1 rounded text-[9px]", log.source === 'Ollama' ? "bg-orange-900/30 text-orange-400" : (log.source === 'Zotero' ? "bg-red-900/30 text-red-400" : "bg-blue-900/30 text-blue-400"))}>
                  {log.source}
                </span>
             </div>
@@ -153,7 +154,7 @@ const NetworkSidebar: React.FC<NetworkSidebarProps> = ({ logs, isProcessing, onC
             {/* Row 3: Details / Status */}
             <div className="flex justify-between items-center mt-1 border-t border-slate-800 pt-1 pointer-events-none">
                 <span className={clsx("font-bold", getStatusColor(log.status))}>
-                   {log.status ? `HTTP ${log.status}` : (log.type === 'req' ? 'Pending...' : 'Error')}
+                   {log.status ? `HTTP ${log.status}` : (log.type === 'req' ? 'Pending...' : (log.type === 'err' ? 'FAILED' : 'INFO'))}
                 </span>
                 {log.duration && (
                    <span className="flex items-center gap-1 text-slate-500">
@@ -162,9 +163,9 @@ const NetworkSidebar: React.FC<NetworkSidebarProps> = ({ logs, isProcessing, onC
                 )}
             </div>
             
-            {/* Error Message */}
-            {log.details && log.type === 'err' && (
-                <div className="mt-1 text-red-400 italic break-words bg-red-900/10 p-1 rounded pointer-events-none">
+            {/* Details Field (Visible for ALL types now) */}
+            {log.details && (
+                <div className="mt-1 text-slate-400 italic break-words bg-slate-800/50 p-1 rounded pointer-events-none border-l-2 border-slate-600">
                     {log.details}
                 </div>
             )}
@@ -174,22 +175,22 @@ const NetworkSidebar: React.FC<NetworkSidebarProps> = ({ logs, isProcessing, onC
                 <div className="mt-2 pt-2 border-t border-slate-700 space-y-2 cursor-text" onClick={e => e.stopPropagation()}>
                     {log.requestBody && (
                         <div>
-                            <div className="text-[9px] font-bold text-blue-300 mb-1">Request Payload:</div>
-                            <pre className="text-[9px] bg-black/50 p-2 rounded text-slate-300 overflow-x-auto max-h-48 scrollbar-thin whitespace-pre-wrap break-all">
+                            <div className="text-[9px] font-bold text-blue-300 mb-1">Verbose Request Dump:</div>
+                            <pre className="text-[9px] bg-black/50 p-2 rounded text-slate-300 overflow-x-auto max-h-[800px] scrollbar-thin whitespace-pre-wrap break-all border border-slate-800/50">
                                 {log.requestBody}
                             </pre>
                         </div>
                     )}
                     {log.responseBody && (
                         <div>
-                            <div className="text-[9px] font-bold text-green-300 mb-1">Response Payload:</div>
-                            <pre className="text-[9px] bg-black/50 p-2 rounded text-slate-300 overflow-x-auto max-h-64 scrollbar-thin whitespace-pre-wrap break-all">
+                            <div className="text-[9px] font-bold text-green-300 mb-1">Verbose Response Dump:</div>
+                            <pre className="text-[9px] bg-black/50 p-2 rounded text-slate-300 overflow-x-auto max-h-[800px] scrollbar-thin whitespace-pre-wrap break-all border border-slate-800/50">
                                 {log.responseBody}
                             </pre>
                         </div>
                     )}
                     {!log.requestBody && !log.responseBody && (
-                        <div className="text-slate-500 italic text-[9px]">No body content captured.</div>
+                        <div className="text-slate-600 italic text-[9px]">No additional binary/text payload captured.</div>
                     )}
                 </div>
             )}

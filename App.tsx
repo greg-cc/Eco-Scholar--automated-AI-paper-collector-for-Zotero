@@ -20,7 +20,7 @@ import QueueModal from './components/QueueModal';
 import QueryManager from './components/QueryManager';
 import NetworkSidebar from './components/NetworkSidebar';
 import ExportReviewModal from './components/ExportReviewModal';
-import { Settings2, CloudUpload, XCircle, Activity, Database, ToggleLeft, ToggleRight, Search, Globe, Library, FileText, AlertOctagon, FastForward, RotateCcw, Play } from 'lucide-react';
+import { Settings2, CloudUpload, XCircle, Activity, Database, ToggleLeft, ToggleRight, Search, Globe, Library, FileText, AlertOctagon, FastForward, RotateCcw, Play, Wifi } from 'lucide-react';
 import { clsx } from 'clsx';
 
 type SearchMode = 'PUBMED' | 'SEMANTIC';
@@ -165,6 +165,20 @@ const App: React.FC = () => {
           setIsProcessing(false);
           setProcessingState(null); // Clear manual control UI
       }
+  };
+
+  const handleCheckZotero = async () => {
+      const zotero = new ZoteroService({
+          apiKey: config.zoteroApiKey,
+          libraryId: config.zoteroLibraryId,
+          useLocal: config.useLocalZotero,
+          ip: config.zoteroIp,
+          port: config.zoteroPort,
+          onLog: handleNetworkLog
+      });
+      
+      const result = await zotero.checkConnection();
+      alert(`Zotero Connection Test:\n\n${result.success ? "✅ SUCCESS" : "❌ FAILED"}\n${result.message}`);
   };
 
   const updateQueueStatus = (index: number, status: QueueItem['status'], extra?: Partial<QueueItem>) => {
@@ -591,6 +605,12 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3">
              <button onClick={() => setUseWebScraping(!useWebScraping)} className={clsx("flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold", useWebScraping ? "bg-purple-100 border-purple-300 text-purple-700" : "bg-slate-50 border-slate-200 text-slate-400")}>{useWebScraping ? <ToggleRight size={16} /> : <ToggleLeft size={16} />} Deep Scraping</button>
              <button onClick={() => setUploadToZotero(!uploadToZotero)} className={clsx("flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold", uploadToZotero ? "bg-red-100 border-red-300 text-red-700" : "bg-blue-100 border-blue-300 text-blue-700")}>{uploadToZotero ? <Library size={14} /> : <FileText size={14} />} {uploadToZotero ? "Mode: Zotero" : "Mode: RIS File"}</button>
+             
+             {/* Check Zotero Button */}
+             <button onClick={handleCheckZotero} className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 text-xs font-bold bg-slate-50 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors" title="Test Zotero Connection">
+                <Wifi size={14} /> Check Zotero
+             </button>
+
              <button onClick={() => setShowExportModal(true)} disabled={results.length === 0 || isProcessing || isUploading} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md disabled:opacity-50"><CloudUpload size={14} /> EXPORT</button>
              <div className="h-6 w-px bg-slate-300 mx-2"></div>
              <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-lg", showSettings ? "bg-slate-200 text-slate-800" : "hover:bg-slate-100 text-slate-500")}><Settings2 size={20} /></button>
