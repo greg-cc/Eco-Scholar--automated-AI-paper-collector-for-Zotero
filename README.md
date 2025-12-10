@@ -35,5 +35,5 @@ The application is pre-configured with the thresholds from your dataset:
 - **Vector Minimum**: 0.59
 - **Composite Minimum**: 4.2
 - **Probability Minimum**: 5 (Normalized from 50 on a 0-10 scale)
-
+Developed with the openthinker model running in ollama.
 You can check `App.tsx` to see the initialization queue matching your CSV queries (Lyme flavonoids, Carotenoids, etc.).
