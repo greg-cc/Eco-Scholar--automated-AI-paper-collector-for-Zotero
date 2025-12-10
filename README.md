@@ -31,9 +31,8 @@ EcoScholar AI is an energy-efficient academic paper filter that uses semantic pr
 
 ## Configuration Defaults
 
-The application is pre-configured with the thresholds from your dataset:
-- **Vector Minimum**: 0.59
-- **Composite Minimum**: 4.2
-- **Probability Minimum**: 5 (Normalized from 50 on a 0-10 scale)
-Developed with the openthinker model running in ollama.
+The application is pre-configured with the thresholds and defaults for finding medical research of phytochemicals and herbal compounds.
+- **Developed with the openthinker model running in ollama.
+
+
 You can check `App.tsx` to see the initialization queue matching your CSV queries (Lyme flavonoids, Carotenoids, etc.).
