@@ -116,7 +116,8 @@ const App: React.FC = () => {
   // Speedup Counters (Reference only, no locking logic)
   const cycleRef = useRef({
     processedCount: 0,
-    qualifiedCount: 0
+    qualifiedCount: 0,
+    failFastTriggered: false
   });
 
   useEffect(() => {
@@ -214,6 +215,7 @@ const App: React.FC = () => {
       setQueue(prev => prev.map((item, i) => i === index ? { ...item, status, ...extra } : item));
   };
 
+  // Returns TRUE if the batch loop should STOP (e.g. Fail Fast Triggered)
   const processPaperBatch = async (
       papers: Paper[], 
       queryVector: number[] | null, 
@@ -221,8 +223,8 @@ const App: React.FC = () => {
       currentItem: QueueItem,
       signal: AbortSignal,
       exportCollector: { paper: Paper; result: ProcessingResult }[]
-  ) => {
-      if (papers.length === 0) return;
+  ): Promise<boolean> => {
+      if (papers.length === 0) return false;
 
       const paperEmbeddings: (number[] | null)[] = [];
       for (let c = 0; c < papers.length; c += 5) {
@@ -236,7 +238,9 @@ const App: React.FC = () => {
       }
 
       for (let pIdx = 0; pIdx < papers.length; pIdx++) {
-           if (signal.aborted) break;
+           if (signal.aborted) return true;
+           if (cycleRef.current.failFastTriggered) return true;
+
            const paper = papers[pIdx];
            const paperVector = paperEmbeddings[pIdx];
            
@@ -266,69 +270,71 @@ const App: React.FC = () => {
            const passedVector = vectorScore >= (currentItem.vecMin ?? config.minVectorScore);
            const passedComposite = compositeScore >= (currentItem.compMin ?? config.minCompositeScore);
            
-           // CRITICAL VISUAL UPDATE
-           // If we have just entered smart mode this iteration, we need to show the header
-           if (!hasTriggeredSmartModeRef.current) {
-                const currentYield = cycleRef.current.qualifiedCount / (cycleRef.current.processedCount || 1);
-                // Trigger if Sample Size Met OR Early Success found (Qualified > 0)
-                const isSampleMet = cycleRef.current.processedCount >= config.speedupSampleCount;
-                const isEarlySuccess = cycleRef.current.qualifiedCount > 0 && currentYield >= config.speedupQualifyRate;
-
-                if (isSampleMet || isEarlySuccess) {
-                    setResults(prev => [...prev, { 
-                        type: 'HARVEST_HEADER', 
-                        data: { 
-                            id: `harvest-${Date.now()}`, 
-                            startRec: cycleRef.current.processedCount, 
-                            stopRec: currentItem.stopRec || 1000 
-                        } 
-                    }]);
-                    hasTriggeredSmartModeRef.current = true;
-                }
-           }
-
            let status: ProcessingResult['status'] = 'FILTERED_OUT';
            let skippedAi = true;
            let aiAnalysis: any = undefined;
 
-           cycleRef.current.processedCount++;
-
-           // RULES ENGINE
            if (passedVector || passedComposite) {
-               const isFirstPaper = cycleRef.current.processedCount === 1;
-               const currentYield = cycleRef.current.qualifiedCount / (cycleRef.current.processedCount || 1);
+               cycleRef.current.processedCount++;
                
-               // Eligibility:
-               // 1. MUST NOT be first paper (force AI on #1)
-               // 2. Either sample count met OR we found at least one qualified paper early
-               // 3. Yield is high enough
-               const hasEnoughData = cycleRef.current.processedCount > config.speedupSampleCount || cycleRef.current.qualifiedCount > 0;
-               const isHighQuality = currentYield >= config.speedupQualifyRate;
+               // --- LOGIC START ---
                
-               const isSpeedupEligible = !isFirstPaper && hasEnoughData && isHighQuality;
-
-               if (isSpeedupEligible) {
-                   status = 'QUALIFIED_SPEEDUP';
-                   skippedAi = true;
-                   cycleRef.current.qualifiedCount++;
+               // 1. FAIL FAST CHECK
+               // If enabled, and we've processed enough samples, and found NOTHING qualified, stop.
+               if (config.failFast && 
+                   cycleRef.current.processedCount >= config.speedupSampleCount && 
+                   cycleRef.current.qualifiedCount === 0) {
+                   
+                   cycleRef.current.failFastTriggered = true;
+                   status = 'SKIPPED_FAIL_FAST';
+                   // Fall through to render this last failure, then the loop will exit at top next iter
                } else {
-                   skippedAi = false;
-                   let contextAbstract = paper.abstract;
-                   if (useWebScraping) {
-                        try {
-                           const fullText = await scraperServiceRef.current.extractWebpageText(paper.url);
-                           if (fullText && fullText.length > 500) contextAbstract += `\n\n[FULL TEXT EXTRACT]: ${fullText.substring(0, 10000)}`;
-                        } catch (e) { console.warn("Scraping failed", paper.id); }
+                   // 2. SPEEDUP ELIGIBILITY
+                   // Target: Based on User Config (Sample Size * Qualify Rate)
+                   // e.g. 10 * 0.1 = 1. We need 1 qualified paper to trigger.
+                   // e.g. 10 * 0.25 = 2.5 -> 3. We need 3 qualified papers.
+                   const targetQualifiedCount = Math.max(1, Math.ceil(config.speedupSampleCount * config.speedupQualifyRate));
+                   
+                   const isFirstPaper = cycleRef.current.processedCount === 1;
+                   const isSpeedupEligible = !isFirstPaper && (cycleRef.current.qualifiedCount >= targetQualifiedCount);
+
+                   // VISUAL HEADER TRIGGER
+                   if (isSpeedupEligible && !hasTriggeredSmartModeRef.current) {
+                        setResults(prev => [...prev, { 
+                            type: 'HARVEST_HEADER', 
+                            data: { 
+                                id: `harvest-${Date.now()}`, 
+                                startRec: cycleRef.current.processedCount, 
+                                stopRec: currentItem.stopRec || 1000 
+                            } 
+                        }]);
+                        hasTriggeredSmartModeRef.current = true;
                    }
-                   
-                   const analysisPaper = { ...paper, abstract: contextAbstract };
-                   aiAnalysis = await aiServiceRef.current!.analyzePaper(analysisPaper, config.gradingTopics, signal);
-                   
-                   if (aiAnalysis.qualified) {
-                       status = 'QUALIFIED';
+
+                   if (isSpeedupEligible) {
+                       status = 'QUALIFIED_SPEEDUP';
+                       skippedAi = true;
                        cycleRef.current.qualifiedCount++;
                    } else {
-                       status = 'AI_REJECTED';
+                       // AI ANALYSIS
+                       skippedAi = false;
+                       let contextAbstract = paper.abstract;
+                       if (useWebScraping) {
+                            try {
+                               const fullText = await scraperServiceRef.current.extractWebpageText(paper.url);
+                               if (fullText && fullText.length > 500) contextAbstract += `\n\n[FULL TEXT EXTRACT]: ${fullText.substring(0, 10000)}`;
+                            } catch (e) { console.warn("Scraping failed", paper.id); }
+                       }
+                       
+                       const analysisPaper = { ...paper, abstract: contextAbstract };
+                       aiAnalysis = await aiServiceRef.current!.analyzePaper(analysisPaper, config.gradingTopics, signal);
+                       
+                       if (aiAnalysis.qualified) {
+                           status = 'QUALIFIED';
+                           cycleRef.current.qualifiedCount++;
+                       } else {
+                           status = 'AI_REJECTED';
+                       }
                    }
                }
            } else {
@@ -367,7 +373,10 @@ const App: React.FC = () => {
                speedupActive: hasTriggeredSmartModeRef.current,
                energySaved: prev.energySaved + (skippedAi ? 1 : 0)
            }));
+
+           if (cycleRef.current.failFastTriggered) return true;
       }
+      return false;
   };
 
   const handleRunCycle = async (mode: 'single' | 'cycle' = 'single') => {
@@ -425,7 +434,7 @@ const App: React.FC = () => {
               updateQueueStatus(qIdx, 'RUNNING');
 
               // Reset Cycle-Specific State for this Query
-              cycleRef.current = { processedCount: 0, qualifiedCount: 0 };
+              cycleRef.current = { processedCount: 0, qualifiedCount: 0, failFastTriggered: false };
               hasTriggeredSmartModeRef.current = false;
               pendingSpeedupExportRef.current = []; 
 
@@ -450,7 +459,7 @@ const App: React.FC = () => {
                         stopRec: STOP_LIMIT,
                         source: searchMode,
                         model: config.provider === 'gemini' ? config.geminiModel : config.ollamaModel,
-                        speedUp: true, failFast: false,
+                        speedUp: true, failFast: config.failFast,
                         speedupSampleCount: config.speedupSampleCount,
                         qualifyRate: config.speedupQualifyRate,
                         collection: item.collectionId || "Default",
@@ -465,9 +474,15 @@ const App: React.FC = () => {
               // --- BATCH LOOP ---
               let currentStart = START_REC;
               const BATCH_SIZE = 20;
+              let failFastStop = false;
 
               while (currentStart < STOP_LIMIT) {
                  if (signal.aborted) break;
+                 if (cycleRef.current.failFastTriggered) {
+                     failFastStop = true;
+                     break;
+                 }
+
                  const currentBatchSize = Math.min(BATCH_SIZE, STOP_LIMIT - currentStart);
 
                  let papers: Paper[] = [];
@@ -528,7 +543,12 @@ const App: React.FC = () => {
                      }
                  }
 
-                 await processPaperBatch(papers, queryVector, activeSentenceVectors, item, signal, pendingSpeedupExportRef.current);
+                 const shouldStop = await processPaperBatch(papers, queryVector, activeSentenceVectors, item, signal, pendingSpeedupExportRef.current);
+                 if (shouldStop) {
+                     failFastStop = true;
+                     break;
+                 }
+
                  currentStart += BATCH_SIZE;
               }
 
@@ -536,7 +556,8 @@ const App: React.FC = () => {
                   ? `${((cycleRef.current.qualifiedCount / cycleRef.current.processedCount)*100).toFixed(0)}%` 
                   : '0%';
               
-              updateQueueStatus(qIdx, 'COMPLETED', { yield: yieldStr });
+              const finalStatus = failFastStop ? 'NEEDS_ADJUSTMENT' : 'COMPLETED';
+              updateQueueStatus(qIdx, finalStatus, { yield: yieldStr });
 
               if (!signal.aborted) {
                   const completeBlock: CycleCompleteData = {
@@ -544,7 +565,8 @@ const App: React.FC = () => {
                       query: item.query,
                       totalFound: cycleRef.current.processedCount,
                       qualifiedCount: pendingSpeedupExportRef.current.length,
-                      status: 'COMPLETED'
+                      status: failFastStop ? 'FAIL_FAST' : 'COMPLETED',
+                      failFastReason: failFastStop ? `Fail Fast Triggered: 0 qualified papers found in the first ${config.speedupSampleCount} processed items.` : undefined
                   };
                   setResults(prev => [...prev, { type: 'CYCLE_COMPLETE', data: completeBlock }]);
               }
